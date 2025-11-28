@@ -9,6 +9,11 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
   );
 }
 
+// Ez a kész, szerver oldali Supabase kliens
 export const supabaseServer = createClient(supabaseUrl, supabaseServiceRoleKey, {
   auth: { persistSession: false }
 });
+
+// Ezt azért exportáljuk, mert máshol így importáltad:
+// import { createClient } from "@/lib/supabaseServer";
+export { createClient };
