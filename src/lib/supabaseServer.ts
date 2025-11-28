@@ -1,12 +1,18 @@
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+export async function createClient() {
+  const cookieStore = await cookies()
 
-if (!supabaseUrl || !supabaseServiceRoleKey) {
-  console.warn("Supabase env vars are missing. Make sure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.");
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        },
+      },
+    }
+  )
 }
-
-export const supabaseServer = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: { persistSession: false }
-});
