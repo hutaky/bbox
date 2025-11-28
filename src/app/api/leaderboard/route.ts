@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabaseServer";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export async function GET() {
-  const supabase = await createClient();
-  
-  const { data, error } = await supabase
+  const { data, error } = await supabaseServer
     .from("user_stats")
     .select("fid, total_points, users(username, is_og)")
     .order("total_points", { ascending: false })
@@ -12,7 +10,10 @@ export async function GET() {
 
   if (error) {
     console.error("leaderboard error", error);
-    return NextResponse.json({ error: "Failed to load leaderboard" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to load leaderboard" },
+      { status: 500 }
+    );
   }
 
   const rows = (data || []).map((row: any, index: number) => ({
