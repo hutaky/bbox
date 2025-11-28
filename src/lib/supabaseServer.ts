@@ -12,7 +12,24 @@ export async function createClient() {
         get(name: string) {
           return cookieStore.get(name)?.value
         },
+        set(name: string, value: string, options: any) {
+          try {
+            cookieStore.set({ name, value, ...options })
+          } catch (error) {
+            // Cookie setting might fail in Server Components
+          }
+        },
+        remove(name: string, options: any) {
+          try {
+            cookieStore.set({ name, value: '', ...options })
+          } catch (error) {
+            // Cookie removal might fail in Server Components
+          }
+        },
       },
     }
   )
 }
+
+// Alias export for backward compatibility with existing code
+export const supabaseServer = createClient
