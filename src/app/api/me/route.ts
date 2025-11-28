@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ensureUser, refreshFreePicksIfNeeded } from "@/lib/user";
+import { ensureUser, getUserState } from "@/lib/user";
 
 function getFidFromRequest(req: Request): number | null {
   const header = req.headers.get("x-bbox-fid");
@@ -16,7 +16,7 @@ export async function GET(req: Request) {
 
   await ensureUser(fid);
 
-  const { user, stats } = await refreshFreePicksIfNeeded(fid);
+  const { user, stats } = await getUserState(fid);
 
   return NextResponse.json({
     fid,
