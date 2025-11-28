@@ -1,25 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
 
 type PickResult = {
   rarity: "common" | "rare" | "epic" | "legendary";
   points: number;
 };
-
-declare global {
-  interface Window {
-    MiniKit?: {
-      context?: () => Promise<{
-        viewer?: {
-          fid?: number;
-          username?: string;
-        };
-      }>;
-    };
-  }
-}
 
 function formatCountdown(targetIso: string | null): string | null {
   if (!targetIso) return null;
@@ -52,55 +40,63 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
 
-  // 1) FID detektálása MiniKit-ből vagy fallbackből
+  // 1) Farcaster MiniApp init + FID detektálás
   useEffect(() => {
-    async function initFid() {
-      if (typeof window === "undefined") return;
-
-      // 1. próba: MiniKit context (amikor Farcaster MiniApp-ból nyitják)
+    async function init() {
+      // jelezzük Farcasternek, hogy az app "ready" → splash screen eltűnik
       try {
-        if (window.MiniKit && typeof window.MiniKit.context === "function") {
-          const ctx = await window.MiniKit.context();
-          const viewerFid = ctx?.viewer?.fid;
-          if (viewerFid && Number.isFinite(viewerFid)) {
-            setFid(viewerFid);
-            return;
-          }
-        }
+        await sdk.actions.ready();
       } catch (e) {
-        console.warn("MiniKit context error (fallback to query/dev fid)", e);
+        console.warn("sdk.actions.ready() failed (ok böngészőben is):", e);
       }
 
-      // 2. próba: ?fid=... query param (lokális / dev teszt)
+      // próbáljuk a FID-et a Frame/MiniApp contextből kiolvasni
+      try {
+        const ctx: any = await sdk.context;
+        const viewerFid =
+          ctx?.user?.fid ??
+          ctx?.viewer?.fid ??
+          ctx?.viewerContext?.user?.fid ??
+          null;
+
+        if (viewerFid && Number.isFinite(viewerFid)) {
+          setFid(viewerFid);
+          return;
+        }
+      } catch (e) {
+        console.warn("sdk.context read failed, falling back to query/dev FID:", e);
+      }
+
+      // ha nem MiniApp környezet, akkor ?fid=... vagy dev fallback
       const fromQuery = getFidFromQuery();
       if (fromQuery) {
         setFid(fromQuery);
-        return;
+      } else {
+        setFid(123456); // dev fallback
       }
-
-      // 3. próba: dev fallback – csak helyi tesztre
-      setFid(123456);
     }
 
-    initFid();
+    if (typeof window !== "undefined") {
+      void init();
+    }
   }, []);
 
-  // 2) User állapot betöltése, ha már van FID
+  // 2) User state betöltése, ha már van FID
   async function loadState(currentFid: number) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/me", {
-        headers: {
-          "x-bbox-fid": String(currentFid)
-        }
-      });
+      const res = await fetch(`/api/me?fid=${currentFid}`);
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Failed to load state");
       } else {
         setUser(data);
-        if (data.nextFreeRefillAt && data.freePicksRemaining === 0 && data.extraPicksBalance === 0) {
+        if (
+          data.nextFreeRefillAt &&
+          data.freePicksRemaining === 0 &&
+          data.extraPicksBalance === 0
+        ) {
           setCountdown(formatCountdown(data.nextFreeRefillAt));
         } else {
           setCountdown(null);
@@ -116,7 +112,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (fid == null) return;
-    loadState(fid);
+    void loadState(fid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fid]);
 
@@ -146,11 +142,8 @@ export default function HomePage() {
     setPicking(true);
     setError(null);
     try {
-      const res = await fetch("/api/pick", {
-        method: "POST",
-        headers: {
-          "x-bbox-fid": String(fid)
-        }
+      const res = await fetch(`/api/pick?fid=${fid}`, {
+        method: "POST"
       });
       const data = await res.json();
       if (!res.ok) {
