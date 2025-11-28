@@ -1,19 +1,15 @@
+import path from "path";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**',
-      },
-    ],
+  experimental: {
+    appDir: true
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: false,
-  },
-}
+  webpack: (config) => {
+    // Make "@/..." point to the "src" directory
+    config.resolve.alias["@" ] = path.join(__dirname, "src");
+    return config;
+  }
+};
 
-export default nextConfig
+export default nextConfig;
