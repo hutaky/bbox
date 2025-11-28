@@ -1,22 +1,34 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabaseServer";
+import { supabaseServer } from "@/lib/supabaseServer";
 import { ensureUser, refreshFreePicksIfNeeded } from "@/lib/user";
 import { rollRarity, rollPoints } from "@/lib/gameLogic";
 
 function getFidFromRequest(req: Request): number | null {
   const header = req.headers.get("x-bbox-fid");
-  if (!header) return null;
-  const fid = Number(header);
-  return Number.isFinite(fid) ? fid : null;
+  if (header) {
+    const fidFromHeader = Number(header);
+    if (Number.isFinite(fidFromHeader)) return fidFromHeader;
+  }
+
+  try {
+    const url = new URL(req.url);
+    const fidParam = url.searchParams.get("fid");
+    if (!fidParam) return null;
+    const fid = Number(fidParam);
+    return Number.isFinite(fid) ? fid : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(req: Request) {
   const fid = getFidFromRequest(req);
   if (!fid) {
-    return NextResponse.json({ error: "Missing FID (x-bbox-fid header)" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Missing FID (x-bbox-fid header or ?fid= param)" },
+      { status: 401 }
+    );
   }
-
-  const supabase = await createClient();
 
   await ensureUser(fid);
   let { user, stats } = await refreshFreePicksIfNeeded(fid);
@@ -32,7 +44,7 @@ export async function POST(req: Request) {
     let next = stats.next_free_refill_at;
     if (!next) {
       next = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-      await supabase
+      await supabaseServer
         .from("user_stats")
         .update({ next_free_refill_at: next })
         .eq("fid", fid);
@@ -69,32 +81,25 @@ export async function POST(req: Request) {
       stats.free_picks_remaining === 0 &&
       update.extra_picks_balance === 0)
   ) {
-    update.next_free_refill_at = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    update.next_free_refill_at = new Date(
+      now.getTime() + 24 * 60 * 60 * 1000
+    ).toISOString();
   }
 
-  const { data: updatedStats, error: updateErr } = await supabase
+  const { data: updatedStats } = await supabaseServer
     .from("user_stats")
     .update(update)
     .eq("fid", fid)
     .select("*")
     .single();
 
-  if (updateErr) {
-    console.error("pick update error", updateErr);
-    return NextResponse.json({ error: "Failed to update stats" }, { status: 500 });
-  }
-
-  const { error: insertErr } = await supabase.from("picks").insert({
+  await supabaseServer.from("picks").insert({
     fid,
     points,
     rarity,
     pick_type: pickType,
     created_at: now.toISOString()
   });
-
-  if (insertErr) {
-    console.error("pick insert error", insertErr);
-  }
 
   return NextResponse.json({
     rarity,
