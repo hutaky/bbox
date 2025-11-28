@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@/lib/supabaseServer";
 import { ensureUser } from "@/lib/user";
 
 function getFidFromRequest(req: Request): number | null {
@@ -22,11 +22,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing txHash" }, { status: 400 });
   }
 
+  const supabase = await createClient();
+
   await ensureUser(fid);
 
   // TODO: verify on-chain payment to BBOX_TREASURY_ADDRESS with BBOX_OG_PRICE_ETH amount.
 
-  const { error: userErr } = await supabaseServer
+  const { error: userErr } = await supabase
     .from("users")
     .update({ is_og: true })
     .eq("fid", fid);
@@ -36,7 +38,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Failed to set OG" }, { status: 500 });
   }
 
-  const { error: payErr } = await supabaseServer.from("payments").insert({
+  const { error: payErr } = await supabase.from("payments").insert({
     fid,
     type: "og",
     pack_size: null,

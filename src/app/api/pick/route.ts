@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@/lib/supabaseServer";
 import { ensureUser, refreshFreePicksIfNeeded } from "@/lib/user";
 import { rollRarity, rollPoints } from "@/lib/gameLogic";
 
@@ -16,6 +16,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing FID (x-bbox-fid header)" }, { status: 401 });
   }
 
+  const supabase = await createClient();
+
   await ensureUser(fid);
   let { user, stats } = await refreshFreePicksIfNeeded(fid);
 
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
     let next = stats.next_free_refill_at;
     if (!next) {
       next = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-      await supabaseServer
+      await supabase
         .from("user_stats")
         .update({ next_free_refill_at: next })
         .eq("fid", fid);
@@ -70,7 +72,7 @@ export async function POST(req: Request) {
     update.next_free_refill_at = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   }
 
-  const { data: updatedStats, error: updateErr } = await supabaseServer
+  const { data: updatedStats, error: updateErr } = await supabase
     .from("user_stats")
     .update(update)
     .eq("fid", fid)
@@ -82,7 +84,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Failed to update stats" }, { status: 500 });
   }
 
-  const { error: insertErr } = await supabaseServer.from("picks").insert({
+  const { error: insertErr } = await supabase.from("picks").insert({
     fid,
     points,
     rarity,

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@/lib/supabaseServer";
 
 export async function GET() {
-  const { data, error } = await supabaseServer
+  const supabase = await createClient();
+  
+  const { data, error } = await supabase
     .from("user_stats")
     .select("fid, total_points, users(username, is_og)")
     .order("total_points", { ascending: false })

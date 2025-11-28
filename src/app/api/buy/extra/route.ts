@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@/lib/supabaseServer";
 import { ensureUser } from "@/lib/user";
 
 function getFidFromRequest(req: Request): number | null {
@@ -22,11 +22,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing txHash or packSize" }, { status: 400 });
   }
 
+  const supabase = await createClient();
+
   await ensureUser(fid);
 
   // TODO: verify on-chain payment to treasury with correct amount based on packSize.
 
-  const { data: stats, error: statsErr } = await supabaseServer
+  const { data: stats, error: statsErr } = await supabase
     .from("user_stats")
     .select("*")
     .eq("fid", fid)
@@ -39,7 +41,7 @@ export async function POST(req: Request) {
 
   const newBalance = stats.extra_picks_balance + Number(packSize);
 
-  const { data: updatedStats, error: updateErr } = await supabaseServer
+  const { data: updatedStats, error: updateErr } = await supabase
     .from("user_stats")
     .update({ extra_picks_balance: newBalance })
     .eq("fid", fid)
@@ -51,7 +53,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Failed to update picks balance" }, { status: 500 });
   }
 
-  const { error: payErr } = await supabaseServer.from("payments").insert({
+  const { error: payErr } = await supabase.from("payments").insert({
     fid,
     type: "extra",
     pack_size: packSize,
