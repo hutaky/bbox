@@ -1,8 +1,10 @@
-import { supabaseServer } from "./supabaseServer";
+import { createClient } from "./supabaseServer";
 import { getDailyFreePicks } from "./gameLogic";
 
 export async function ensureUser(fid: number, username?: string | null, pfpUrl?: string | null) {
-  const { data: existing, error } = await supabaseServer
+  const supabase = await createClient();
+  
+  const { data: existing, error } = await supabase
     .from("users")
     .select("*")
     .eq("fid", fid)
@@ -13,7 +15,7 @@ export async function ensureUser(fid: number, username?: string | null, pfpUrl?:
   }
 
   if (!existing) {
-    const { data: inserted, error: insertErr } = await supabaseServer
+    const { data: inserted, error: insertErr } = await supabase
       .from("users")
       .insert({
         fid,
@@ -28,7 +30,7 @@ export async function ensureUser(fid: number, username?: string | null, pfpUrl?:
       throw insertErr;
     }
 
-    const { error: statErr } = await supabaseServer
+    const { error: statErr } = await supabase
       .from("user_stats")
       .insert({
         fid,
@@ -48,7 +50,9 @@ export async function ensureUser(fid: number, username?: string | null, pfpUrl?:
 }
 
 export async function getUserState(fid: number) {
-  const { data: user, error: userErr } = await supabaseServer
+  const supabase = await createClient();
+  
+  const { data: user, error: userErr } = await supabase
     .from("users")
     .select("*")
     .eq("fid", fid)
@@ -59,7 +63,7 @@ export async function getUserState(fid: number) {
     throw userErr;
   }
 
-  const { data: stats, error: statsErr } = await supabaseServer
+  const { data: stats, error: statsErr } = await supabase
     .from("user_stats")
     .select("*")
     .eq("fid", fid)
@@ -74,7 +78,9 @@ export async function getUserState(fid: number) {
 }
 
 export async function refreshFreePicksIfNeeded(fid: number) {
-  const { data: user, error: userErr } = await supabaseServer
+  const supabase = await createClient();
+  
+  const { data: user, error: userErr } = await supabase
     .from("users")
     .select("is_og")
     .eq("fid", fid)
@@ -85,7 +91,7 @@ export async function refreshFreePicksIfNeeded(fid: number) {
     throw userErr;
   }
 
-  const { data: stats, error: statsErr } = await supabaseServer
+  const { data: stats, error: statsErr } = await supabase
     .from("user_stats")
     .select("*")
     .eq("fid", fid)
@@ -105,7 +111,7 @@ export async function refreshFreePicksIfNeeded(fid: number) {
     stats.free_picks_remaining === 0
   ) {
     const freePicks = getDailyFreePicks(user.is_og);
-    const { data: updated, error: updateErr } = await supabaseServer
+    const { data: updated, error: updateErr } = await supabase
       .from("user_stats")
       .update({
         free_picks_remaining: freePicks,
