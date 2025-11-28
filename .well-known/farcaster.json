@@ -1,0 +1,20 @@
+{
+  "frame": {
+    "name": "BBOX",
+    "version": "1",
+    "iconUrl": "https://box-sage.vercel.app//icon.png",
+    "homeUrl": "https://box-sage.vercel.app/",
+    "imageUrl": "https://box-sage.vercel.app//image.png",
+    "splashImageUrl": "https://box-sage.vercel.app//splash.png",
+    "splashBackgroundColor": "#0052FF",
+    "webhookUrl": "https://box-sage.vercel.app//api/webhook",
+    "subtitle": "Daily Based Box Game",
+    "description": "Daily Based Box Game – Open boxes, earn points, climb the leaderboard.",
+    "primaryCategory": "games"
+  },
+  "accountAssociation": {
+    "header": "eyJmaWQiOjUxMTg0MywidHlwZSI6ImF1dGgiLCJrZXkiOiIweEVhQTJhNjkwRmIzZTExMDU0NDAxN0VmYTAyYmFjNmFGYWE3RTUyNTMifQ",
+    "payload": "eyJkb21haW4iOiJodHRwczovL2JveC1zYWdlLnZlcmNlbC5hcHAvIn0",
+    "signature": "Tk3nGrCOlFl+AaRSmNFHBd0ZVA0Xg8VMMDtqQKQRgE4Oyemhy0xA9n31wSSRB4g71jBdkiZ65hIiwIGIKVdbixs="
+  }
+}
