@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { ensureUser, refreshFreePicksIfNeeded } from "@/lib/user";
 
 function getFidFromRequest(req: Request): number | null {
-  // 1) headerből (MiniAppban így jön)
+  // 1) headerből (MiniAppban így jön: x-bbox-fid)
   const header = req.headers.get("x-bbox-fid");
   if (header) {
     const fidFromHeader = Number(header);
@@ -31,12 +31,16 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Létrehozzuk a user-t + user_stats-ot, ha még nem létezik
     await ensureUser(fid);
+
+    // Frissítjük a free pickeket, ha lejárt a 24 óra
     const { user, stats } = await refreshFreePicksIfNeeded(fid);
 
     return NextResponse.json({
       fid,
-      username: user.username,
+      // user-ben a TS szerint csak is_og van tipizálva, ezért cast:
+      username: (user as any).username ?? null,
       isOg: user.is_og,
       totalPoints: stats.total_points,
       freePicksRemaining: stats.free_picks_remaining,
