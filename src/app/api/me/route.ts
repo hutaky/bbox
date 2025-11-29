@@ -2,17 +2,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-type NeynarUser = {
-  fid: number;
-  username?: string;
-  display_name?: string;
-  pfp_url?: string;
-  pfps?: { url: string }[];
-};
+export const runtime = "nodejs";
 
-type NeynarBulkResponse = {
-  users?: NeynarUser[];
-};
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
 export async function POST(req: Request) {
   try {
@@ -26,145 +23,102 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 1) Neynar profil lekérés (username + pfp) ---
-    let username: string | null = null;
-    let pfpUrl: string | null = null;
-
-    const neynarApiKey = process.env.NEYNAR_API_KEY;
-    if (neynarApiKey) {
-      try {
-        const res = await fetch(
-          `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`,
-          {
-            headers: {
-              accept: "application/json",
-              api_key: neynarApiKey,
-            },
-          }
-        );
-
-        if (res.ok) {
-          const data = (await res.json()) as NeynarBulkResponse;
-          const u = data.users?.[0];
-          if (u) {
-            username = u.username ?? u.display_name ?? null;
-            pfpUrl =
-              u.pfp_url ??
-              (Array.isArray(u.pfps) && u.pfps.length > 0
-                ? u.pfps[0].url
-                : null);
-          }
-        } else {
-          console.error("Neynar user fetch failed", await res.text());
-        }
-      } catch (err) {
-        console.error("Error calling Neynar bulk user API:", err);
-      }
-    }
-
-    // --- 2) Supabase kliens (közvetlenül @supabase/supabase-js-ből) ---
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    // Ha nincs Supabase config, akkor csak Neynar-adatot adunk vissza,
-    // hogy legalább a pfp+username működjön, ne legyél "Guest".
-    if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({
-        fid,
-        username: username ?? `fid_${fid}`,
-        pfpUrl,
-        isOg: false,
-        totalPoints: 0,
-        freePicksRemaining: 0,
-        extraPicksRemaining: 0,
-        nextFreePickAt: null,
-        commonPicks: 0,
-        rarePicks: 0,
-        epicPicks: 0,
-        legendaryPicks: 0,
-      });
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false },
-    });
-
-    const safeUsername = username ?? `fid_${fid}`;
-
-    // --- 3) users upsert (fid + profil adatok) ---
-    const { data: userRow, error: userError } = await supabase
+    // --- USERS ---
+    const { data: existingUser, error: userErr } = await supabase
       .from("users")
-      .upsert(
-        {
-          fid,
-          username: safeUsername,
-          pfp_url: pfpUrl,
-        },
-        { onConflict: "fid" }
-      )
-      .select()
-      .single();
+      .select("*")
+      .eq("fid", fid)
+      .maybeSingle();
 
-    if (userError) {
-      console.error("Supabase users upsert error:", userError);
+    if (userErr) console.error("users select error:", userErr);
+
+    let userRow = existingUser;
+
+    if (!userRow) {
+      const { data: insertedUser, error: insertUserErr } = await supabase
+        .from("users")
+        .insert({
+          fid,
+          username: `fid_${fid}`,
+          pfp_url: null,
+          is_og: false,
+        })
+        .select()
+        .single();
+
+      if (insertUserErr) console.error("users insert error:", insertUserErr);
+      else userRow = insertedUser;
     }
 
-    // --- 4) user_stats lekérés / létrehozás ---
-    let stats: any = null;
-
-    const { data: existingStats, error: statsSelectError } = await supabase
+    // --- USER_STATS ---
+    const { data: existingStats, error: statsErr } = await supabase
       .from("user_stats")
       .select("*")
       .eq("fid", fid)
       .maybeSingle();
 
-    if (statsSelectError) {
-      console.error("Supabase user_stats select error:", statsSelectError);
-    }
+    if (statsErr) console.error("user_stats select error:", statsErr);
 
-    if (!existingStats) {
-      const { data: inserted, error: insertError } = await supabase
+    let statsRow = existingStats;
+
+    if (!statsRow) {
+      const { data: insertedStats, error: insertStatsErr } = await supabase
         .from("user_stats")
         .insert({
           fid,
           total_points: 0,
           free_picks_remaining: 1,
           extra_picks_remaining: 0,
-          last_pick_at: null,
           next_free_pick_at: null,
-          common_picks: 0,
-          rare_picks: 0,
-          epic_picks: 0,
-          legendary_picks: 0,
+          common_opens: 0,
+          rare_opens: 0,
+          epic_opens: 0,
+          legendary_opens: 0,
+          last_rarity: null,
+          last_points: null,
+          last_opened_at: null,
         })
         .select()
         .single();
 
-      if (insertError) {
-        console.error("Supabase user_stats insert error:", insertError);
-      } else {
-        stats = inserted;
-      }
-    } else {
-      stats = existingStats;
+      if (insertStatsErr) console.error("user_stats insert error:", insertStatsErr);
+      else statsRow = insertedStats;
     }
 
-    // --- 5) Válasz, amit a frontend már ismer ---
+    let lastResult = null as
+      | {
+          rarity: "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
+          points: number;
+          openedAt: string;
+        }
+      | null;
+
+    if (statsRow?.last_rarity) {
+      lastResult = {
+        rarity: statsRow.last_rarity,
+        points: statsRow.last_points ?? 0,
+        openedAt:
+          statsRow.last_opened_at ?? new Date().toISOString(),
+      };
+    }
+
     return NextResponse.json({
       fid,
-      username: userRow?.username ?? safeUsername,
-      pfpUrl: userRow?.pfp_url ?? pfpUrl,
+      username: userRow?.username ?? `fid_${fid}`,
+      pfpUrl: userRow?.pfp_url ?? null,
       isOg: userRow?.is_og ?? false,
-      totalPoints: stats?.total_points ?? 0,
-      freePicksRemaining: stats?.free_picks_remaining ?? 0,
-      extraPicksRemaining: stats?.extra_picks_remaining ?? 0,
-      nextFreePickAt: stats?.next_free_pick_at,
-      commonPicks: stats?.common_picks ?? 0,
-      rarePicks: stats?.rare_picks ?? 0,
-      epicPicks: stats?.epic_picks ?? 0,
-      legendaryPicks: stats?.legendary_picks ?? 0,
+
+      totalPoints: statsRow?.total_points ?? 0,
+      freePicksRemaining: statsRow?.free_picks_remaining ?? 0,
+      extraPicksRemaining: statsRow?.extra_picks_remaining ?? 0,
+      nextFreePickAt: statsRow?.next_free_pick_at,
+
+      commonOpens: statsRow?.common_opens ?? 0,
+      rareOpens: statsRow?.rare_opens ?? 0,
+      epicOpens: statsRow?.epic_opens ?? 0,
+      legendaryOpens: statsRow?.legendary_opens ?? 0,
+
+      lastResult,
     });
   } catch (err) {
     console.error("Error in /api/me:", err);
