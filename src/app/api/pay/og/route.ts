@@ -7,7 +7,8 @@ const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 const OG_PRICE = Number(process.env.BBOX_OG_PRICE || "5.0");
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
+// Itt is NEXT_PUBLIC_SUPABASE_URL-t használunk
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const runtime = "nodejs";
@@ -100,7 +101,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Mentjük payments-be pending státusszal
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
       kind: "og_rank",
