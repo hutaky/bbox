@@ -55,6 +55,32 @@ export default function HomePage() {
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
 
+  // ---- User state betöltése ----
+  async function loadUserState(currentFid: number | null) {
+    if (!currentFid) return;
+    try {
+      const res = await fetch("/api/me", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fid: currentFid }),
+      });
+      const data = await res.json();
+      setUser(data);
+
+      if (data?.nextFreePickAt) {
+        setCountdown(formatCountdown(data.nextFreePickAt));
+      } else {
+        setCountdown("Ready");
+      }
+
+      if (data?.lastResult) {
+        setLastResult(data.lastResult);
+      }
+    } catch (err) {
+      console.error("Failed to load user state:", err);
+    }
+  }
+
   // ---- Mini app init (Farcaster SDK) ----
   useEffect(() => {
     let cancelled = false;
@@ -63,15 +89,10 @@ export default function HomePage() {
       try {
         await sdk.actions.ready();
 
-        // Ha a mini appből jön, megpróbáljuk kinyerni a FID-et a contextből
         const context = await sdk.context;
         const ctxFid = context?.user?.fid ?? null;
         const queryFid = getFidFromQuery();
-
         const finalFid = ctxFid || queryFid;
-        if (!finalFid) {
-          console.warn("No FID detected from mini app context or query");
-        }
 
         if (!cancelled) {
           setFid(finalFid);
@@ -94,31 +115,6 @@ export default function HomePage() {
       cancelled = true;
     };
   }, []);
-
-  // ---- User state betöltése ----
-  async function loadUserState(currentFid: number | null) {
-    try {
-      const res = await fetch("/api/me", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid: currentFid })
-      });
-      const data = await res.json();
-      setUser(data);
-
-      if (data?.nextFreePickAt) {
-        setCountdown(formatCountdown(data.nextFreePickAt));
-      } else {
-        setCountdown("Ready");
-      }
-
-      if (data?.lastResult) {
-        setLastResult(data.lastResult);
-      }
-    } catch (err) {
-      console.error("Failed to load user state:", err);
-    }
-  }
 
   // ---- Countdown frissítése ----
   useEffect(() => {
@@ -146,7 +142,7 @@ export default function HomePage() {
       const res = await fetch("/api/pick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid, boxIndex })
+        body: JSON.stringify({ fid, boxIndex }),
       });
 
       if (!res.ok) {
@@ -167,14 +163,14 @@ export default function HomePage() {
         commonOpens: data.commonOpens,
         rareOpens: data.rareOpens,
         epicOpens: data.epicOpens,
-        legendaryOpens: data.legendaryOpens
+        legendaryOpens: data.legendaryOpens,
       };
 
       setUser(updated);
       setLastResult({
         rarity: data.rarity,
         points: data.points,
-        openedAt: new Date().toISOString()
+        openedAt: new Date().toISOString(),
       });
       setShowResultModal(true);
     } catch (err) {
@@ -202,7 +198,7 @@ export default function HomePage() {
   }
 
   // ---- Neynar Pay: extra picks ----
-  async function handleBuyExtra(packageType: "1" | "5" | "10") {
+  async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
       return;
@@ -214,18 +210,38 @@ export default function HomePage() {
       const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid, packageType })
+        body: JSON.stringify({ fid, packSize }),
       });
 
       const data = await res.json();
 
-      if (!res.ok || !data.frameUrl) {
+      if (!res.ok || !data.frameUrl || !data.frameId) {
         console.error("Failed to create pay frame:", data);
         setBuyError(data.error ?? "Payment creation failed.");
         return;
       }
 
+      // Fizetési frame megnyitása
       await sdk.actions.openUrl(data.frameUrl);
+
+      // Visszatérés után confirm tick
+      const confirmRes = await fetch("/api/pay/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fid, frameId: data.frameId }),
+      });
+
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok) {
+        console.error("Confirm error:", confirmData);
+        setBuyError(confirmData.error ?? "Payment confirm failed.");
+      } else if (confirmData.status === "completed") {
+        // újratöltjük a user state-et
+        await loadUserState(fid);
+      } else if (confirmData.status === "pending") {
+        // még nincs kész, de a következő belépéskor úgyis ellenőrizzük
+        console.log("Payment still pending.");
+      }
     } catch (err) {
       console.error("Error in handleBuyExtra:", err);
       setBuyError("Something went wrong, try again.");
@@ -247,18 +263,34 @@ export default function HomePage() {
       const res = await fetch("/api/pay/og", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid })
+        body: JSON.stringify({ fid }),
       });
 
       const data = await res.json();
 
-      if (!res.ok || !data.frameUrl) {
+      if (!res.ok || !data.frameUrl || !data.frameId) {
         console.error("Failed to create OG pay frame:", data);
         setBuyError(data.error ?? "OG payment creation failed.");
         return;
       }
 
       await sdk.actions.openUrl(data.frameUrl);
+
+      const confirmRes = await fetch("/api/pay/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fid, frameId: data.frameId }),
+      });
+
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok) {
+        console.error("OG confirm error:", confirmData);
+        setBuyError(confirmData.error ?? "OG payment confirm failed.");
+      } else if (confirmData.status === "completed") {
+        await loadUserState(fid);
+      } else if (confirmData.status === "pending") {
+        console.log("OG payment still pending.");
+      }
     } catch (err) {
       console.error("Error in handleBuyOg:", err);
       setBuyError("Something went wrong, try again.");
@@ -412,7 +444,8 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-yellow-300/90 bg-yellow-500/10 border border-yellow-500/40 rounded-xl px-3 py-2">
             <div className="font-medium mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Come back when the countdown hits <span className="font-semibold">Ready</span>, 
+              Come back when the countdown hits{" "}
+              <span className="font-semibold">Ready</span>, 
               or buy extra picks to keep opening today.
             </p>
           </div>
@@ -442,7 +475,9 @@ export default function HomePage() {
 
           <button
             onClick={() =>
-              canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true)
+              canPick
+                ? handlePick(Math.floor(Math.random() * 3))
+                : setShowBuyModal(true)
             }
             disabled={picking}
             className={`w-full py-2.5 rounded-xl text-sm font-semibold transition
@@ -536,34 +571,41 @@ export default function HomePage() {
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
               <p className="text-[11px] text-gray-400">
-                Pay with Base ETH via Neynar Pay. Picks don&apos;t expire and can be used on any day.
+                Pay with Base USDC via Neynar Pay. Picks don&apos;t expire and
+                can be used on any day.
               </p>
             </div>
 
             <div className="space-y-2 mb-3">
               <button
                 disabled={buyLoading}
-                onClick={() => handleBuyExtra("1")}
+                onClick={() => handleBuyExtra(1)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">0.0005 ETH</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}
+                </span>
               </button>
               <button
                 disabled={buyLoading}
-                onClick={() => handleBuyExtra("5")}
+                onClick={() => handleBuyExtra(5)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">0.0020 ETH</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}
+                </span>
               </button>
               <button
                 disabled={buyLoading}
-                onClick={() => handleBuyExtra("10")}
+                onClick={() => handleBuyExtra(10)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">0.0035 ETH</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}
+                </span>
               </button>
             </div>
 
@@ -625,7 +667,7 @@ export default function HomePage() {
               onClick={handleBuyOg}
               className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2"
             >
-              Become OG (0.01 ETH)
+              Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
             </button>
 
             <button
