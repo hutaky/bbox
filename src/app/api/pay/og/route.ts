@@ -1,12 +1,18 @@
 // src/app/api/pay/og/route.ts
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 const OG_PRICE = Number(process.env.BBOX_OG_PRICE || "5.0");
 
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 export const runtime = "nodejs";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type Body = {
   fid: number;
@@ -86,12 +92,25 @@ export async function POST(req: Request) {
     const frameUrl = data?.transaction_frame?.url as string | undefined;
     const frameId = data?.transaction_frame?.id as string | undefined;
 
-    if (!frameUrl) {
+    if (!frameUrl || !frameId) {
       console.error("Invalid Neynar OG response:", data);
       return NextResponse.json(
         { error: "Invalid Neynar response" },
         { status: 500 }
       );
+    }
+
+    // Mentjük payments-be pending státusszal
+    const { error: insertError } = await supabase.from("payments").insert({
+      fid,
+      kind: "og_rank",
+      pack_size: null,
+      frame_id: frameId,
+      status: "pending",
+    });
+
+    if (insertError) {
+      console.error("Failed to insert OG payment record:", insertError);
     }
 
     return NextResponse.json({
