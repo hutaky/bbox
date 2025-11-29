@@ -282,32 +282,38 @@ export default function HomePage() {
             {/* INFO CARD */}
             <section className="rounded-2xl border border-gray-800 p-4 bg-gray-950/70 space-y-3">
               <div className="grid grid-cols-2 gap-3 text-sm">
-                {/* Total points */}
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-400">Total points</span>
-                  <span className="text-base font-semibold">
-                    {user.totalPoints}
-                  </span>
+                {/* Total points (balra, egy sorban) */}
+                <div className="text-left">
+                  <p className="text-xs text-gray-400">
+                    Total points{" "}
+                    <span className="text-base font-semibold text-gray-100">
+                      {user.totalPoints}
+                    </span>
+                  </p>
                 </div>
 
-                {/* Extra picks (felül jobbra) */}
-                <div className="flex items-center justify-between text-right">
-                  <span className="text-xs text-gray-400">Extra picks</span>
-                  <span className="text-base font-semibold">
-                    {user.extraPicksBalance}
-                  </span>
+                {/* Extra picks (jobbra, egy sorban) */}
+                <div className="text-right">
+                  <p className="text-xs text-gray-400">
+                    Extra picks{" "}
+                    <span className="text-base font-semibold text-gray-100">
+                      {user.extraPicksBalance}
+                    </span>
+                  </p>
                 </div>
 
-                {/* Free picks (alul balra) */}
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-400">Free picks</span>
-                  <span className="text-base font-semibold">
-                    {user.freePicksRemaining}
-                  </span>
+                {/* Free picks (balra, egy sorban) */}
+                <div className="text-left">
+                  <p className="text-xs text-gray-400">
+                    Free picks{" "}
+                    <span className="text-base font-semibold text-gray-100">
+                      {user.freePicksRemaining}
+                    </span>
+                  </p>
                 </div>
 
-                {/* Buy picks gomb (alul jobbra) */}
-                <div className="flex items-end justify-end">
+                {/* Buy picks gomb (jobbra) */}
+                <div className="flex items-center justify-end">
                   <button
                     type="button"
                     className="rounded-full border border-baseBlue/70 px-3 py-1 text-xs font-semibold text-baseBlue hover:bg-baseBlue/10"
@@ -382,7 +388,7 @@ export default function HomePage() {
       {/* Result modal overlay */}
       {showResultModal && lastResult && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
-          <div className="w-full max-w-sm mx-4 rounded-2xl border border-gray-800 bg-gray-950 p-4 space-y-3">
+          <div className="w-full max-w-sm mx-4 rounded-2xl border border-gray-800 bg-gray-950 p-4 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-100">Box result</h3>
               <button
@@ -394,8 +400,9 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div className="space-y-1 text-sm">
-              <p>
+            {/* Látványos eredmény box */}
+            <div className="rounded-xl border border-gray-700 bg-gray-900/80 p-3 text-center space-y-1">
+              <p className="text-sm">
                 You opened a{" "}
                 <span
                   className={
@@ -405,14 +412,14 @@ export default function HomePage() {
                       ? "text-epic font-semibold"
                       : lastResult.rarity === "rare"
                       ? "text-rare font-semibold"
-                      : "text-gray-200 font-medium"
+                      : "text-gray-100 font-medium"
                   }
                 >
                   {lastResult.rarity.toUpperCase()} box
                 </span>
                 !
               </p>
-              <p>
+              <p className="text-sm">
                 Reward:{" "}
                 <span className="font-semibold text-baseBlue">
                   +{lastResult.points} points
@@ -420,7 +427,7 @@ export default function HomePage() {
               </p>
             </div>
 
-            <div className="flex gap-2 pt-2">
+            <div className="flex gap-2 pt-1">
               <button
                 onClick={handleShareResult}
                 className="flex-1 inline-flex items-center justify-center rounded-full border border-gray-700 px-3 py-2 text-xs font-medium text-gray-200 hover:border-baseBlue"
