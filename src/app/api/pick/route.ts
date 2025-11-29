@@ -1,112 +1,162 @@
+// src/app/api/pick/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
-import { ensureUser, refreshFreePicksIfNeeded } from "@/lib/user";
-import { rollRarity, rollPoints } from "@/lib/gameLogic";
+import { createClient } from "@supabase/supabase-js";
 
-function getFidFromRequest(req: Request): number | null {
-  const header = req.headers.get("x-bbox-fid");
-  if (header) {
-    const fidFromHeader = Number(header);
-    if (Number.isFinite(fidFromHeader)) return fidFromHeader;
-  }
+export const runtime = "nodejs";
 
-  try {
-    const url = new URL(req.url);
-    const fidParam = url.searchParams.get("fid");
-    if (!fidParam) return null;
-    const fid = Number(fidParam);
-    return Number.isFinite(fid) ? fid : null;
-  } catch {
-    return null;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
+
+type Rarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
+
+function rollBox(): { rarity: Rarity; points: number } {
+  const r = Math.random();
+
+  if (r < 0.7) {
+    const points = 10 + Math.floor(Math.random() * 31); // 10-40
+    return { rarity: "COMMON", points };
+  } else if (r < 0.9) {
+    const points = 40 + Math.floor(Math.random() * 61); // 40-100
+    return { rarity: "RARE", points };
+  } else if (r < 0.99) {
+    const points = 100 + Math.floor(Math.random() * 151); // 100-250
+    return { rarity: "EPIC", points };
+  } else {
+    const points = 250 + Math.floor(Math.random() * 751); // 250-1000
+    return { rarity: "LEGENDARY", points };
   }
 }
 
 export async function POST(req: Request) {
-  const fid = getFidFromRequest(req);
-  if (!fid) {
-    return NextResponse.json(
-      { error: "Missing FID (x-bbox-fid header or ?fid= param)" },
-      { status: 401 }
-    );
-  }
+  try {
+    const body = await req.json().catch(() => null);
+    const fid = body?.fid as number | undefined;
 
-  await ensureUser(fid);
-  let { user, stats } = await refreshFreePicksIfNeeded(fid);
-
-  let pickType: "free" | "extra" | null = null;
-
-  if (stats.free_picks_remaining > 0) {
-    pickType = "free";
-  } else if (stats.extra_picks_balance > 0) {
-    pickType = "extra";
-  } else {
-    const now = new Date();
-    let next = stats.next_free_refill_at;
-    if (!next) {
-      next = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-      await supabaseServer
-        .from("user_stats")
-        .update({ next_free_refill_at: next })
-        .eq("fid", fid);
+    if (!fid || Number.isNaN(fid)) {
+      return NextResponse.json(
+        { error: "Missing or invalid fid" },
+        { status: 400 }
+      );
     }
+
+    // stats lekérés
+    const { data: stats, error: statsErr } = await supabase
+      .from("user_stats")
+      .select("*")
+      .eq("fid", fid)
+      .maybeSingle();
+
+    if (statsErr) {
+      console.error("user_stats select error:", statsErr);
+      return NextResponse.json({ error: "DB error" }, { status: 500 });
+    }
+
+    if (!stats) {
+      return NextResponse.json(
+        { error: "No stats row for this fid" },
+        { status: 404 }
+      );
+    }
+
+    let { free_picks_remaining, extra_picks_remaining } = stats;
+    const now = new Date();
+
+    // ha nincs free pick, de lejárt a régi next_free_pick_at, refill 1 free
+    if (
+      (free_picks_remaining ?? 0) <= 0 &&
+      stats.next_free_pick_at &&
+      new Date(stats.next_free_pick_at) <= now
+    ) {
+      free_picks_remaining = 1;
+    }
+
+    const hasFree = (free_picks_remaining ?? 0) > 0;
+    const hasExtra = (extra_picks_remaining ?? 0) > 0;
+
+    if (!hasFree && !hasExtra) {
+      return NextResponse.json(
+        { error: "No picks left" },
+        { status: 400 }
+      );
+    }
+
+    let usedFree = false;
+    if (hasFree) {
+      usedFree = true;
+      free_picks_remaining = (free_picks_remaining ?? 0) - 1;
+    } else {
+      extra_picks_remaining = (extra_picks_remaining ?? 0) - 1;
+    }
+
+    const { rarity, points } = rollBox();
+
+    const newTotalPoints = (stats.total_points ?? 0) + points;
+
+    const common_opens =
+      (stats.common_opens ?? 0) + (rarity === "COMMON" ? 1 : 0);
+    const rare_opens =
+      (stats.rare_opens ?? 0) + (rarity === "RARE" ? 1 : 0);
+    const epic_opens =
+      (stats.epic_opens ?? 0) + (rarity === "EPIC" ? 1 : 0);
+    const legendary_opens =
+      (stats.legendary_opens ?? 0) + (rarity === "LEGENDARY" ? 1 : 0);
+
+    // ha most fogyott el az utolsó free pick → 24h múlva legyen új free
+    let next_free_pick_at = stats.next_free_pick_at as string | null;
+    if (usedFree && free_picks_remaining <= 0) {
+      const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      next_free_pick_at = in24h.toISOString();
+    }
+
+    const { data: updatedStats, error: updateErr } = await supabase
+      .from("user_stats")
+      .update({
+        total_points: newTotalPoints,
+        free_picks_remaining,
+        extra_picks_remaining,
+        next_free_pick_at,
+        common_opens,
+        rare_opens,
+        epic_opens,
+        legendary_opens,
+        last_rarity: rarity,
+        last_points: points,
+        last_opened_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .eq("fid", fid)
+      .select()
+      .single();
+
+    if (updateErr || !updatedStats) {
+      console.error("user_stats update error:", updateErr);
+      return NextResponse.json(
+        { error: "Failed to update stats" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      rarity,
+      points,
+      totalPoints: updatedStats.total_points,
+      freePicksRemaining: updatedStats.free_picks_remaining,
+      extraPicksRemaining: updatedStats.extra_picks_remaining,
+      nextFreePickAt: updatedStats.next_free_pick_at,
+      commonOpens: updatedStats.common_opens,
+      rareOpens: updatedStats.rare_opens,
+      epicOpens: updatedStats.epic_opens,
+      legendaryOpens: updatedStats.legendary_opens,
+    });
+  } catch (err) {
+    console.error("Error in /api/pick:", err);
     return NextResponse.json(
-      {
-        error: "No picks left",
-        nextFreeRefillAt: next
-      },
-      { status: 400 }
+      { error: "Internal server error" },
+      { status: 500 }
     );
   }
-
-  const rarity = rollRarity();
-  const points = rollPoints(rarity);
-  const now = new Date();
-
-  const update: any = {
-    total_points: stats.total_points + points,
-    updated_at: now.toISOString()
-  };
-
-  if (pickType === "free") {
-    update.free_picks_remaining = stats.free_picks_remaining - 1;
-  } else {
-    update.extra_picks_balance = stats.extra_picks_balance - 1;
-  }
-
-  if (
-    (pickType === "free" &&
-      update.free_picks_remaining === 0 &&
-      stats.extra_picks_balance === 0) ||
-    (pickType === "extra" &&
-      stats.free_picks_remaining === 0 &&
-      update.extra_picks_balance === 0)
-  ) {
-    update.next_free_refill_at = new Date(
-      now.getTime() + 24 * 60 * 60 * 1000
-    ).toISOString();
-  }
-
-  const { data: updatedStats } = await supabaseServer
-    .from("user_stats")
-    .update(update)
-    .eq("fid", fid)
-    .select("*")
-    .single();
-
-  await supabaseServer.from("picks").insert({
-    fid,
-    points,
-    rarity,
-    pick_type: pickType,
-    created_at: now.toISOString()
-  });
-
-  return NextResponse.json({
-    rarity,
-    points,
-    totalPoints: updatedStats.total_points,
-    freePicksRemaining: updatedStats.free_picks_remaining,
-    extraPicksBalance: updatedStats.extra_picks_balance,
-    nextFreeRefillAt: updatedStats.next_free_refill_at
-  });
 }
