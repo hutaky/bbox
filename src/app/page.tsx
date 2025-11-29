@@ -40,6 +40,46 @@ function getFidFromQuery(): number | null {
   return Number.isFinite(fid) ? fid : null;
 }
 
+// ---- TIER HELPER ----
+function getTier(totalPoints: number | undefined) {
+  const pts = totalPoints ?? 0;
+
+  if (pts >= 30000) {
+    return {
+      name: "Platinum",
+      colorClass: "text-cyan-300",
+      badgeClass:
+        "bg-cyan-900/30 border border-cyan-400/70 text-cyan-50",
+      desc: "Top tier grinder.",
+    };
+  }
+  if (pts >= 20000) {
+    return {
+      name: "Gold",
+      colorClass: "text-amber-300",
+      badgeClass:
+        "bg-amber-900/25 border border-amber-400/70 text-amber-50",
+      desc: "Serious box opener.",
+    };
+  }
+  if (pts >= 10000) {
+    return {
+      name: "Silver",
+      colorClass: "text-gray-200",
+      badgeClass:
+        "bg-slate-800/60 border border-slate-300/60 text-slate-50",
+      desc: "On the way up.",
+    };
+  }
+  return {
+    name: "Bronze",
+    colorClass: "text-orange-200",
+    badgeClass:
+      "bg-orange-900/30 border border-orange-500/70 text-orange-50",
+    desc: "Just getting started.",
+  };
+}
+
 export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
@@ -132,6 +172,8 @@ export default function HomePage() {
     (user?.freePicksRemaining ?? 0) > 0 ||
     (user?.extraPicksRemaining ?? 0) > 0;
 
+  const tier = getTier(user?.totalPoints);
+
   // ---- Box pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
@@ -221,10 +263,8 @@ export default function HomePage() {
         return;
       }
 
-      // Fizetési frame megnyitása
       await sdk.actions.openUrl(data.frameUrl);
 
-      // Visszatérés után confirm tick
       const confirmRes = await fetch("/api/pay/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -236,10 +276,8 @@ export default function HomePage() {
         console.error("Confirm error:", confirmData);
         setBuyError(confirmData.error ?? "Payment confirm failed.");
       } else if (confirmData.status === "completed") {
-        // újratöltjük a user state-et
         await loadUserState(fid);
       } else if (confirmData.status === "pending") {
-        // még nincs kész, de a következő belépéskor úgyis ellenőrizzük
         console.log("Payment still pending.");
       }
     } catch (err) {
@@ -377,13 +415,13 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {user?.pfpUrl && (
+            {user?.pfpUrl ? (
               <img
                 src={user.pfpUrl}
                 alt={user.username}
-                className="w-9 h-9 rounded-full border border-baseBlue/40"
+                className="w-9 h-9 rounded-full border border-baseBlue/40 object-cover"
               />
-            )}
+            ) : null}
             <div className="text-right">
               <div className="text-sm font-medium truncate">
                 {user?.username ?? "Guest"}
@@ -398,24 +436,36 @@ export default function HomePage() {
         </header>
 
         {/* STATS CARD */}
-        <section className="bg-gradient-to-br from-baseBlue/10 via-baseBlue/5 to-black border border-baseBlue/40 rounded-2xl px-4 py-3 mb-4">
+        <section className="bg-gradient-to-br from-baseBlue/15 via-baseBlue/5 to-black border border-baseBlue/40 rounded-2xl px-4 py-3 mb-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1">
-              <div className="flex justify-between text-xs text-gray-400">
+              <div className="flex justify-between text-xs text-gray-200">
                 <span>Total points</span>
-                <span>{user?.totalPoints ?? 0}</span>
+                <span className="font-semibold text-baseBlue">
+                  {user?.totalPoints ?? 0}
+                </span>
               </div>
-              <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <div className="flex justify-between text-xs text-gray-200 mt-1">
                 <span>Extra picks</span>
-                <span>{user?.extraPicksRemaining ?? 0}</span>
+                <span className="font-semibold">
+                  {user?.extraPicksRemaining ?? 0}
+                </span>
               </div>
-              <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <div className="flex justify-between text-xs text-gray-200 mt-1">
                 <span>Free picks</span>
-                <span>{user?.freePicksRemaining ?? 0}</span>
+                <span className="font-semibold">
+                  {user?.freePicksRemaining ?? 0}
+                </span>
               </div>
-              <div className="text-[11px] text-gray-500 mt-2">
+              <div className="text-[11px] text-gray-300 mt-2">
                 Next free box:{" "}
-                <span className="text-gray-300">
+                <span
+                  className={
+                    countdown === "Ready"
+                      ? "text-emerald-300 font-semibold"
+                      : "text-amber-300 font-semibold"
+                  }
+                >
                   {countdown || "Ready"}
                 </span>
               </div>
@@ -427,15 +477,25 @@ export default function HomePage() {
               )}
             </div>
 
-            <button
-              onClick={() => setShowBuyModal(true)}
-              className="ml-3 inline-flex flex-col items-end justify-center px-3 py-2 rounded-xl bg-baseBlue hover:bg-baseBlue/90 text-xs font-medium transition"
-            >
-              <span>Buy extra</span>
-              <span className="text-[10px] text-blue-100/80">
-                +1 / +5 / +10 picks
-              </span>
-            </button>
+            <div className="flex flex-col gap-2 ml-3 w-32">
+              <button
+                onClick={() => setShowBuyModal(true)}
+                className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-xl bg-baseBlue hover:bg-baseBlue/90 text-xs font-semibold transition"
+              >
+                <span>Buy extra</span>
+              </button>
+
+              <div
+                className={`px-3 py-2 rounded-xl text-[11px] flex flex-col justify-center ${tier.badgeClass}`}
+              >
+                <span className="uppercase tracking-[0.08em] text-[9px] text-gray-300">
+                  Your tier
+                </span>
+                <span className={`text-sm font-semibold ${tier.colorClass}`}>
+                  {tier.name}
+                </span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -445,8 +505,8 @@ export default function HomePage() {
             <div className="font-medium mb-1">No boxes left to open</div>
             <p className="text-[11px]">
               Come back when the countdown hits{" "}
-              <span className="font-semibold">Ready</span>, 
-              or buy extra picks to keep opening today.
+              <span className="font-semibold">Ready</span>, or buy extra
+              picks to keep opening today.
             </p>
           </div>
         )}
@@ -461,14 +521,14 @@ export default function HomePage() {
                 key={index}
                 onClick={() => handlePick(index)}
                 disabled={!canPick || picking}
-                className={`relative aspect-square rounded-2xl flex items-center justify-center border text-3xl transition transform active:scale-95
+                className={`relative aspect-square rounded-2xl flex items-center justify-center border text-4xl transition transform active:scale-95
                   ${
                     !canPick || picking
                       ? "border-zinc-700 bg-zinc-900 text-zinc-600 cursor-not-allowed"
-                      : "border-baseBlue/50 bg-gradient-to-br from-baseBlue/15 via-zinc-900 to-black hover:from-baseBlue/25"
+                      : "border-baseBlue/60 bg-gradient-to-br from-baseBlue/20 via-zinc-900 to-black hover:from-baseBlue/30"
                   }`}
               >
-                <span>📦</span>
+                <span>🎁</span>
               </button>
             ))}
           </div>
