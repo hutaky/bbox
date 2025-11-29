@@ -41,7 +41,10 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
 
-  // 1) Farcaster MiniApp init + FID detektálás
+  const [viewerName, setViewerName] = useState<string | null>(null);
+  const [viewerPfp, setViewerPfp] = useState<string | null>(null);
+
+  // 1) Farcaster MiniApp init + FID / username / pfp detektálás
   useEffect(() => {
     async function init() {
       try {
@@ -52,11 +55,34 @@ export default function HomePage() {
 
       try {
         const ctx: any = await sdk.context;
+
         const viewerFid =
           ctx?.user?.fid ??
           ctx?.viewer?.fid ??
           ctx?.viewerContext?.user?.fid ??
           null;
+
+        const uname =
+          ctx?.user?.username ??
+          ctx?.viewer?.username ??
+          ctx?.viewerContext?.user?.username ??
+          null;
+
+        const pfp =
+          ctx?.user?.pfpUrl ??
+          ctx?.user?.pfp_url ??
+          ctx?.viewer?.pfpUrl ??
+          ctx?.viewer?.pfp_url ??
+          ctx?.viewerContext?.user?.pfpUrl ??
+          ctx?.viewerContext?.user?.pfp_url ??
+          null;
+
+        if (uname && typeof uname === "string") {
+          setViewerName(uname);
+        }
+        if (pfp && typeof pfp === "string") {
+          setViewerPfp(pfp);
+        }
 
         if (viewerFid && Number.isFinite(viewerFid)) {
           setFid(viewerFid);
@@ -200,16 +226,15 @@ export default function HomePage() {
   }
 
   const displayName =
-    user?.username && user.username.trim().length > 0
+    viewerName ||
+    (user?.username && user.username.trim().length > 0
       ? user.username
-      : user
-      ? `fid:${user.fid}`
-      : "BBOX player";
+      : "BBOX player");
 
   const avatarInitial = displayName.charAt(0).toUpperCase();
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-4">
+    <main className="min-h-screen flex flex-col items-center px-4 py-6">
       <div className="w-full max-w-md space-y-5">
         {/* HEADER */}
         <header className="flex items-center justify-between">
@@ -223,10 +248,18 @@ export default function HomePage() {
 
           {/* User avatar + username (jobbra) */}
           <div className="flex flex-col items-end gap-1">
-            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600 flex items-center justify-center text-sm font-semibold">
-              {avatarInitial}
-            </div>
-            <span className="text-xs text-gray-300 max-w-[140px] truncate text-right">
+            {viewerPfp ? (
+              <img
+                src={viewerPfp}
+                alt="User avatar"
+                className="h-8 w-8 rounded-full border border-gray-600 object-cover"
+              />
+            ) : (
+              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600 flex items-center justify-center text-sm font-semibold">
+                {avatarInitial}
+              </div>
+            )}
+            <span className="text-xs text-gray-300 max-w-[160px] truncate text-right">
               {displayName}
             </span>
           </div>
@@ -249,24 +282,31 @@ export default function HomePage() {
             {/* INFO CARD */}
             <section className="rounded-2xl border border-gray-800 p-4 bg-gray-950/70 space-y-3">
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-xs text-gray-400">Total points</p>
-                  <p className="text-base font-semibold">
+                {/* Total points */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Total points</span>
+                  <span className="text-base font-semibold">
                     {user.totalPoints}
-                  </p>
+                  </span>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-400">Free picks</p>
-                  <p className="text-base font-semibold">
-                    {user.freePicksRemaining}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">Extra picks</p>
-                  <p className="text-base font-semibold">
+
+                {/* Extra picks (felül jobbra) */}
+                <div className="flex items-center justify-between text-right">
+                  <span className="text-xs text-gray-400">Extra picks</span>
+                  <span className="text-base font-semibold">
                     {user.extraPicksBalance}
-                  </p>
+                  </span>
                 </div>
+
+                {/* Free picks (alul balra) */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Free picks</span>
+                  <span className="text-base font-semibold">
+                    {user.freePicksRemaining}
+                  </span>
+                </div>
+
+                {/* Buy picks gomb (alul jobbra) */}
                 <div className="flex items-end justify-end">
                   <button
                     type="button"
