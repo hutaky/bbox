@@ -1,9 +1,129 @@
 // src/app/api/me/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabaseServer";
-import { ensureUser } from "@/lib/user";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY || "";
+
+// Egyetlen, service role-os Supabase kliens az API route-nak
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+// Minimal „ensureUser”: létrehozza a users + stats sort, ha nincs
+async function ensureUserLocal(fid: number) {
+  // users
+  const { data: existingUser, error: userErr } = await supabase
+    .from("users")
+    .select("fid")
+    .eq("fid", fid)
+    .maybeSingle();
+
+  if (userErr) {
+    console.error("ensureUserLocal users fetch error:", userErr);
+  }
+
+  if (!existingUser) {
+    const { error: insertUserErr } = await supabase.from("users").insert({
+      fid,
+      username: null,
+      pfp_url: null,
+      is_og: false,
+    });
+
+    if (insertUserErr) {
+      console.error("ensureUserLocal users insert error:", insertUserErr);
+    }
+  }
+
+  // stats
+  const { data: existingStats, error: statsErr } = await supabase
+    .from("stats")
+    .select("fid")
+    .eq("fid", fid)
+    .maybeSingle();
+
+  if (statsErr) {
+    console.error("ensureUserLocal stats fetch error:", statsErr);
+  }
+
+  if (!existingStats) {
+    const { error: insertStatsErr } = await supabase.from("stats").insert({
+      fid,
+      total_points: 0,
+      free_picks_remaining: 1,
+      extra_picks_remaining: 0,
+      next_free_pick_at: null,
+      common_opens: 0,
+      rare_opens: 0,
+      epic_opens: 0,
+      legendary_opens: 0,
+      last_rarity: null,
+      last_points: null,
+      last_opened_at: null,
+    });
+
+    if (insertStatsErr) {
+      console.error("ensureUserLocal stats insert error:", insertStatsErr);
+    }
+  }
+}
+
+// Megpróbáljuk Neynar-ból lehúzni a user nevet + pfp-t, és elmentjük
+async function syncUserFromNeynar(fid: number) {
+  if (!NEYNAR_API_KEY) return;
+
+  try {
+    const res = await fetch(
+      `https://api.neynar.com/v2/farcaster/user?fid=${fid}`,
+      {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          "x-api-key": NEYNAR_API_KEY,
+        },
+      }
+    );
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("Neynar user fetch error:", res.status, text);
+      return;
+    }
+
+    const data: any = await res.json().catch(() => ({}));
+    const user = data?.user || data?.result?.user || data;
+
+    // Kísérleti, mert az endpoint struktúrája változhat
+    const username: string | null =
+      user?.username ??
+      user?.custody_address ??
+      null;
+
+    const pfpUrl: string | null =
+      user?.pfp_url ??
+      user?.pfp?.url ??
+      null;
+
+    if (!username && !pfpUrl) return;
+
+    const { error: updateErr } = await supabase
+      .from("users")
+      .update({
+        username,
+        pfp_url: pfpUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("fid", fid);
+
+    if (updateErr) {
+      console.error("syncUserFromNeynar update error:", updateErr);
+    }
+  } catch (e) {
+    console.error("syncUserFromNeynar exception:", e);
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -17,12 +137,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const supabase = await createClient();
+    // User + stats sor biztosítása
+    await ensureUserLocal(fid);
 
-    // Gondoskodunk róla, hogy user + stats sor létezzen
-    await ensureUser(fid);
+    // Megpróbáljuk Neynar-ból frissíteni (nem blokkolja a választ, ha elromlik is)
+    syncUserFromNeynar(fid).catch(() => {});
 
-    // users tábla: username, pfp_url, is_og
+    // users tábla
     const { data: userRow, error: userErr } = await supabase
       .from("users")
       .select("fid, username, pfp_url, is_og")
@@ -33,7 +154,7 @@ export async function POST(req: Request) {
       console.error("Supabase users fetch error:", userErr);
     }
 
-    // stats tábla: pontok, pickek, box statok
+    // stats tábla
     const { data: statsRow, error: statsErr } = await supabase
       .from("stats")
       .select(
