@@ -4,21 +4,41 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 
-export default function FaqPage() {
+function getFidFromQuery(): number | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const f = params.get("fid");
+  if (!f) return null;
+  const n = Number(f);
+  return Number.isFinite(n) ? n : null;
+}
+
+export default function FAQPage() {
   const [viewerName, setViewerName] = useState<string | null>(null);
   const [viewerPfp, setViewerPfp] = useState<string | null>(null);
+  const [fid, setFid] = useState<number | null>(null);
 
-  // Same header logic as on the main page
+  // SAME HEADER LOGIC AS HOMEPAGE & LEADERBOARD
   useEffect(() => {
-    async function init() {
+    async function initHeader() {
       try {
         await sdk.actions.ready();
       } catch (e) {
-        console.warn("sdk.actions.ready() failed (FAQ):", e);
+        console.warn("sdk.actions.ready() failed on FAQ");
       }
 
       try {
         const ctx: any = await sdk.context;
+
+        const ctxFid =
+          ctx?.user?.fid ??
+          ctx?.viewer?.fid ??
+          ctx?.viewerContext?.user?.fid ??
+          null;
+
+        const queryFid = getFidFromQuery();
+        const finalFid = ctxFid || queryFid || null;
+        if (finalFid) setFid(finalFid);
 
         const uname =
           ctx?.user?.username ??
@@ -35,62 +55,62 @@ export default function FaqPage() {
           ctx?.viewerContext?.user?.pfp_url ??
           null;
 
-        if (uname && typeof uname === "string") {
-          setViewerName(uname);
-        } else {
-          setViewerName("BBOX player");
-        }
+        setViewerName(uname || "BBOX player");
 
-        if (pfp && typeof pfp === "string") {
-          setViewerPfp(pfp);
-        }
-      } catch (e) {
-        console.warn("sdk.context read failed on FAQ:", e);
-        setViewerName(prev => prev || "BBOX player");
+        if (pfp && typeof pfp === "string") setViewerPfp(pfp);
+      } catch (_) {
+        setViewerName("BBOX player");
+        const q = getFidFromQuery();
+        if (q) setFid(q);
       }
     }
-
-    if (typeof window !== "undefined") {
-      void init();
-    }
+    if (typeof window !== "undefined") initHeader();
   }, []);
 
   const displayName = viewerName || "BBOX player";
   const avatarInitial = displayName.charAt(0).toUpperCase();
 
   return (
-    <main className="min-h-screen px-4 py-6 flex flex-col items-center">
+    <main className="min-h-screen bg-black text-white p-4 flex flex-col items-center">
       <div className="w-full max-w-md space-y-4">
-        {/* COMMON HEADER (same as main) */}
-        <header className="flex items-center justify-between">
-          {/* Logo + app name (left) */}
+        {/* HEADER – identical to main / leaderboard */}
+        <header className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-baseBlue to-purple-500 flex items-center justify-center text-xs font-bold">
-              B
+            <img
+              src="/icon.png"
+              alt="BBOX logo"
+              className="w-8 h-8 rounded-lg border border-baseBlue/40"
+            />
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
+              <p className="text-[11px] text-gray-400">
+                Daily Based Box game
+              </p>
             </div>
-            <span className="text-xl font-semibold">BBOX</span>
           </div>
 
-          {/* User avatar + username (right) */}
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
             {viewerPfp ? (
               <img
                 src={viewerPfp}
-                alt="User avatar"
-                className="h-8 w-8 rounded-full border border-gray-600 object-cover"
+                alt={displayName}
+                className="w-9 h-9 rounded-full border border-baseBlue/40 object-cover"
               />
             ) : (
-              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600 flex items-center justify-center text-sm font-semibold">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-baseBlue/40 flex items-center justify-center text-sm font-semibold">
                 {avatarInitial}
               </div>
             )}
-            <span className="text-xs text-gray-300 max-w-[160px] truncate text-right">
-              {displayName}
-            </span>
+            <div className="text-right">
+              <div className="text-sm font-medium truncate">{displayName}</div>
+              {fid && (
+                <div className="text-[11px] text-gray-500">FID #{fid}</div>
+              )}
+            </div>
           </div>
         </header>
 
-        {/* Page-specific top bar */}
+        {/* TOP BAR */}
         <div className="flex items-center justify-between mt-2">
           <Link
             href="/"
@@ -99,60 +119,67 @@ export default function FaqPage() {
             <span>←</span>
             <span>Back</span>
           </Link>
-          <span className="text-sm font-semibold text-gray-200">BBOX FAQ</span>
+          <span className="text-sm font-semibold text-gray-200">FAQ</span>
         </div>
 
-        {/* Content */}
-        <section className="rounded-2xl border border-gray-800 bg-gray-950/80 p-4 space-y-3 text-sm text-gray-200">
-          <p>
-            <strong>What is BBOX?</strong>
-            <br />
-            BBOX is a Farcaster MiniApp where you open boxes, earn points and
-            climb the leaderboard. Every day you get free picks, and you can
-            collect rare boxes for bigger rewards.
-          </p>
+        {/* FAQ CONTENT */}
+        <section className="mt-2 space-y-4 text-sm text-gray-300">
+          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
+            <h3 className="text-base font-semibold text-white">What is BBOX?</h3>
+            <p>
+              BBOX is a daily box-opening mini-game on Farcaster.  
+              Every day you get a free box — plus you can collect extra picks  
+              to open even more.
+            </p>
+          </div>
 
-          <p>
-            <strong>How do daily picks work?</strong>
-            <br />
-            Every user receives daily free picks. If you run out of both free
-            and extra picks, your free pick automatically refills after 24 hours
-            from your last opening.
-          </p>
+          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
+            <h3 className="text-base font-semibold text-white">How do I play?</h3>
+            <p>
+              Pick a box, open it, earn points.  
+              Common → Legendary: the rarer the box, the bigger the reward.
+            </p>
+          </div>
 
-          <p>
-            <strong>What is the “Random Open” button?</strong>
-            <br />
-            Random Open consumes 1 pick and reveals a random box out of the
-            three visible boxes. Each box contains points based on its rarity.
-          </p>
+          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
+            <h3 className="text-base font-semibold text-white">
+              Why should I collect more points?
+            </h3>
+            <p>
+              Each season comes with some… let’s call them <i>special surprises</i>.  
+              Being higher on the leaderboard definitely won’t hurt.  
+              If nothing else — you can flex your rank all season long 😎
+            </p>
+          </div>
 
-          <p>
-            <strong>What are rarities?</strong>
-            <br />
-            Every box you open has a rarity: <strong>COMMON</strong>,{" "}
-            <strong>RARE</strong>, <strong>EPIC</strong>, or{" "}
-            <strong>LEGENDARY</strong>. Higher rarity = more points.
-          </p>
+          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
+            <h3 className="text-base font-semibold text-white">
+              What are extra picks?
+            </h3>
+            <p>
+              Extra picks let you open additional boxes on the same day.  
+              They don’t expire and you can stack as many as you want.
+            </p>
+          </div>
 
-          <p>
-            <strong>What are points used for?</strong>
-            <br />
-            Points determine your position on the leaderboard. Future seasons,
-            rewards and airdrops may be influenced by your points and activity.
-          </p>
+          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
+            <h3 className="text-base font-semibold text-white">Who are OGs?</h3>
+            <p>
+              OGs get a permanent daily bonus and a badge next to their name.  
+              A small group with big benefits.
+            </p>
+          </div>
 
-          <p>
-            <strong>What is the Leaderboard?</strong>
-            <br />
-            The leaderboard shows the top players sorted by points. It displays
-            usernames, rarity-open stats (C / R / E / L), and total points.
-          </p>
-
-          <p className="text-xs text-gray-400">
-            More features (OG rank, extra pick packs, seasonal rewards, and
-            more) may be added over time.
-          </p>
+          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
+            <h3 className="text-base font-semibold text-white">
+              Any tips for climbing the ranks?
+            </h3>
+            <p>
+              Open your free box daily, keep your streak alive,  
+              and use extra picks smartly.  
+              Rarer boxes can push you up the leaderboard fast.
+            </p>
+          </div>
         </section>
       </div>
     </main>
