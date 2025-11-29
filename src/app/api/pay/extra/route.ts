@@ -1,112 +1,135 @@
 // src/app/api/pay/extra/route.ts
 import { NextResponse } from "next/server";
 
-const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
-const TREASURY_ADDRESS = process.env.BBOX_TREASURY_ADDRESS;
-const TOKEN_CONTRACT = process.env.BBOX_TOKEN_CONTRACT;
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
+const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
+const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 
-// Árak (ETH-ben – WETH contracton keresztül megy)
-const PACKAGE_PRICES: Record<"1" | "5" | "10", number> = {
-  "1": 0.0005, // 1 pick
-  "5": 0.002,  // 5 picks (olcsóbb / pick)
-  "10": 0.0035 // 10 picks (még olcsóbb / pick)
+const PRICE_1 = Number(process.env.BBOX_EXTRA_PRICE_1 || "0.5");   // 1 pick
+const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 pick
+const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
+
+export const runtime = "nodejs";
+
+type Body = {
+  fid: number;
+  packSize: 1 | 5 | 10;
 };
 
 export async function POST(req: Request) {
   try {
-    if (!NEYNAR_API_KEY || !TREASURY_ADDRESS || !TOKEN_CONTRACT) {
-      console.error("Missing env vars for Neynar Pay");
-      return NextResponse.json(
-        { error: "Server misconfigured" },
-        { status: 500 }
-      );
-    }
+    const body = (await req.json()) as Body;
+    const { fid, packSize } = body;
 
-    const body = await req.json().catch(() => ({}));
-    const { fid, packageType } = body as {
-      fid?: number;
-      packageType?: "1" | "5" | "10";
-    };
-
-    if (!packageType || !PACKAGE_PRICES[packageType]) {
+    if (!fid || !packSize) {
       return NextResponse.json(
-        { error: "Invalid packageType" },
+        { error: "Missing fid or packSize" },
         { status: 400 }
       );
     }
 
-    const amount = PACKAGE_PRICES[packageType];
+    if (!NEYNAR_API_KEY || !RECEIVER_ADDRESS || !USDC_CONTRACT) {
+      return NextResponse.json(
+        { error: "Server misconfigured (Neynar / payment envs missing)" },
+        { status: 500 }
+      );
+    }
 
-    // Idempotency key
-    const idem = crypto.randomUUID();
+    let amount: number;
+    let lineItemName: string;
+
+    switch (packSize) {
+      case 1:
+        amount = PRICE_1;
+        lineItemName = "BBOX Extra Picks · 1";
+        break;
+      case 5:
+        amount = PRICE_5;
+        lineItemName = "BBOX Extra Picks · 5";
+        break;
+      case 10:
+        amount = PRICE_10;
+        lineItemName = "BBOX Extra Picks · 10";
+        break;
+      default:
+        return NextResponse.json(
+          { error: "Invalid packSize" },
+          { status: 400 }
+        );
+    }
 
     const payload = {
       transaction: {
         to: {
-          address: TREASURY_ADDRESS,
-          network: "base", // Base lánc
-          token_contract_address: TOKEN_CONTRACT,
-          amount
-        }
+          network: "base",
+          address: RECEIVER_ADDRESS,
+          token_contract_address: USDC_CONTRACT,
+          amount, // USDC amount in whole units (USDC = 6 decimals, Neynar oldal kezeli)
+        },
       },
       config: {
-        // opcionális, de hasznos: csak az adott FID fizethessen
-        allowlist_fids: fid ? [fid] : [],
         line_items: [
           {
-            name: `Extra picks (${packageType})`,
-            description: `BBOX extra box openings (${packageType} picks)${
-              fid ? ` for FID ${fid}` : ""
-            }`,
-            // tetszőleges kép – használhatod a saját splash / icon URL-edet
-            image: "https://box-sage.vercel.app/splash.png"
-          }
+            name: lineItemName,
+            description: `Extra BBOX picks for FID ${fid}`,
+            image:
+              "https://box-sage.vercel.app/icon.png", // vagy bármilyen promó kép
+          },
         ],
         action: {
-          text: "Pay",
+          text: "Pay with USDC",
           text_color: "#FFFFFF",
-          button_color: "#0052FF"
-        }
+          button_color: "#0052FF",
+        },
       },
-      // idempotency key – ha újraküldöd ugyanazzal, nem jön duplikált frame
-      idem
+      // Opcionális: metadata, amit visszakapsz a webhookban
+      metadata: {
+        kind: "extra_picks",
+        fid,
+        pack_size: packSize,
+      },
     };
 
     const res = await fetch(
-      "https://api.neynar.com/v2/farcaster/frame/transaction/pay/",
+      "https://api.neynar.com/v2/farcaster/frame/transaction/pay",
       {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "x-api-key": NEYNAR_API_KEY
+          accept: "application/json",
+          "content-type": "application/json",
+          "x-api-key": NEYNAR_API_KEY,
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       }
     );
 
     if (!res.ok) {
-      const text = await res.text();
-      console.error("Neynar Pay error:", res.status, text);
+      const text = await res.text().catch(() => "");
+      console.error("Neynar pay error:", res.status, text);
       return NextResponse.json(
-        { error: "Failed to create payment mini app" },
+        { error: "Failed to create Neynar pay frame" },
         { status: 500 }
       );
     }
 
     const data = await res.json();
-
     const frameUrl = data?.transaction_frame?.url as string | undefined;
+    const frameId = data?.transaction_frame?.id as string | undefined;
+
     if (!frameUrl) {
-      console.error("No frame URL in Neynar response", data);
+      console.error("Invalid Neynar pay response:", data);
       return NextResponse.json(
-        { error: "Invalid response from Neynar" },
+        { error: "Invalid Neynar response" },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ frameUrl });
-  } catch (err) {
-    console.error("Error in /api/pay/extra:", err);
+    return NextResponse.json({
+      frameUrl,
+      frameId,
+    });
+  } catch (error) {
+    console.error("Error in /api/pay/extra:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
