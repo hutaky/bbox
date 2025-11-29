@@ -10,7 +10,8 @@ const PRICE_1 = Number(process.env.BBOX_EXTRA_PRICE_1 || "0.5");   // 1 pick
 const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 pick
 const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
+// FONTOS: a frontendnél is használt URL-t használjuk
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const runtime = "nodejs";
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
           network: "base",
           address: RECEIVER_ADDRESS,
           token_contract_address: USDC_CONTRACT,
-          amount, // USDC full units (Neynar oldalon van kezelve a decimális)
+          amount,
         },
       },
       config: {
@@ -128,7 +129,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Mentjük a payments táblába pending státusszal
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
       kind: "extra_picks",
@@ -139,7 +139,6 @@ export async function POST(req: Request) {
 
     if (insertError) {
       console.error("Failed to insert payment record:", insertError);
-      // ettől még visszaadjuk a frameUrl-t, hogy tudjon fizetni
     }
 
     return NextResponse.json({
