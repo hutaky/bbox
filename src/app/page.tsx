@@ -199,14 +199,37 @@ export default function HomePage() {
     }
   }
 
+  const displayName =
+    user?.username && user.username.trim().length > 0
+      ? user.username
+      : user
+      ? `fid:${user.fid}`
+      : "BBOX player";
+
+  const avatarInitial = displayName.charAt(0).toUpperCase();
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4">
-      <div className="w-full max-w-md space-y-6">
-        <header className="text-center space-y-2">
-          <h1 className="text-3xl font-bold text-baseBlue">BBOX</h1>
-          <p className="text-sm text-gray-300">
-            Daily Based Box game. Pick a box, earn points, climb the leaderboard.
-          </p>
+      <div className="w-full max-w-md space-y-5">
+        {/* HEADER */}
+        <header className="flex items-center justify-between">
+          {/* Logo + app name (balra) */}
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-baseBlue to-purple-500 flex items-center justify-center text-xs font-bold">
+              B
+            </div>
+            <span className="text-xl font-semibold">BBOX</span>
+          </div>
+
+          {/* User avatar + username (jobbra) */}
+          <div className="flex flex-col items-end gap-1">
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600 flex items-center justify-center text-sm font-semibold">
+              {avatarInitial}
+            </div>
+            <span className="text-xs text-gray-300 max-w-[140px] truncate text-right">
+              {displayName}
+            </span>
+          </div>
         </header>
 
         {initializing && (
@@ -223,59 +246,82 @@ export default function HomePage() {
 
         {!initializing && !loading && user && (
           <>
-            <section className="rounded-xl border border-gray-800 p-4 space-y-2 bg-gray-950/60">
-              <p className="text-sm text-gray-400">
-                FID: <span className="font-mono text-gray-200">{user.fid}</span>
-              </p>
-              <p className="text-sm">
-                Total points: <span className="font-semibold">{user.totalPoints}</span>
-              </p>
-              <p className="text-sm">
-                Free picks today:{" "}
-                <span className="font-semibold">{user.freePicksRemaining}</span>
-              </p>
-              <p className="text-sm">
-                Extra picks:{" "}
-                <span className="font-semibold">{user.extraPicksBalance}</span>
-              </p>
+            {/* INFO CARD */}
+            <section className="rounded-2xl border border-gray-800 p-4 bg-gray-950/70 space-y-3">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-gray-400">Total points</p>
+                  <p className="text-base font-semibold">
+                    {user.totalPoints}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-400">Free picks</p>
+                  <p className="text-base font-semibold">
+                    {user.freePicksRemaining}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Extra picks</p>
+                  <p className="text-base font-semibold">
+                    {user.extraPicksBalance}
+                  </p>
+                </div>
+                <div className="flex items-end justify-end">
+                  <button
+                    type="button"
+                    className="rounded-full border border-baseBlue/70 px-3 py-1 text-xs font-semibold text-baseBlue hover:bg-baseBlue/10"
+                  >
+                    Buy picks
+                  </button>
+                </div>
+              </div>
+
               {user.isOg && (
                 <p className="inline-flex items-center rounded-full bg-baseBlue/20 px-3 py-1 text-xs font-semibold text-baseBlue mt-1">
                   BBOX OG
                 </p>
               )}
+
               {!canPick && user.nextFreeRefillAt && (
-                <p className="text-xs text-gray-400 mt-2">
+                <p className="text-xs text-gray-400 mt-1">
                   Next free pick in:{" "}
                   <span className="font-mono">{countdown ?? "00:00:00"}</span>
                 </p>
               )}
             </section>
 
-            <section className="rounded-xl border border-gray-800 p-4 bg-gray-950/60 space-y-4">
+            {/* BOX AREA */}
+            <section className="rounded-2xl border border-gray-800 p-4 bg-gray-950/70 space-y-4">
               <h2 className="text-lg font-semibold text-center">Pick your BBOX</h2>
               <p className="text-xs text-center text-gray-400">
                 Each pick reveals one of three boxes. One pick = one opening.
               </p>
 
+              {/* Box ikonok */}
               <div className="grid grid-cols-3 gap-3 mt-3">
                 {[0, 1, 2].map(i => (
                   <button
                     key={i}
                     disabled={!canPick || picking}
                     onClick={handlePick}
-                    className="h-20 rounded-lg border border-gray-700 bg-gradient-to-b from-gray-900 to-gray-950 flex items-center justify-center text-sm font-semibold hover:border-baseBlue disabled:opacity-40 disabled:hover:border-gray-700 transition"
+                    className="h-20 rounded-xl border border-gray-700 bg-gradient-to-b from-gray-900 to-black flex flex-col items-center justify-center text-xs font-medium hover:border-baseBlue disabled:opacity-40 disabled:hover:border-gray-700 transition"
                   >
-                    {canPick ? "BOX" : "—"}
+                    <div className="text-2xl mb-1">📦</div>
+                    <span className="text-[11px] tracking-wide uppercase text-gray-300">
+                      Box
+                    </span>
                   </button>
                 ))}
               </div>
 
+              {/* Fő gomb */}
               <button
                 disabled={!canPick || picking}
                 onClick={handlePick}
-                className="w-full mt-3 rounded-lg bg-baseBlue py-2 text-sm font-semibold disabled:opacity-50"
+                className="w-full mt-3 rounded-full bg-baseBlue py-2 text-sm font-semibold disabled:opacity-50"
               >
-                {picking ? "Opening..." : "Open a box"}
+                {picking ? "Opening..." : "Random open"}
               </button>
 
               {error && (
@@ -298,9 +344,7 @@ export default function HomePage() {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
           <div className="w-full max-w-sm mx-4 rounded-2xl border border-gray-800 bg-gray-950 p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-100">
-                Box result
-              </h3>
+              <h3 className="text-sm font-semibold text-gray-100">Box result</h3>
               <button
                 onClick={() => setShowResultModal(false)}
                 className="text-gray-400 hover:text-gray-200 text-sm"
