@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+/**
+ * Ne generáljon statikus cache-t / revalidate-et
+ */
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -13,7 +18,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 export async function GET() {
   try {
-    // 1) statok lekérése pontszám szerint rendezve
+    // 1) Statok pontszám szerint rendezve
     const { data: stats, error: statsErr } = await supabase
       .from("user_stats")
       .select(
@@ -33,15 +38,26 @@ export async function GET() {
       console.error("leaderboard stats error:", statsErr);
       return NextResponse.json(
         { error: "Failed to load leaderboard stats" },
-        { status: 500 }
+        {
+          status: 500,
+          headers: {
+            "Cache-Control":
+              "no-store, no-cache, must-revalidate, proxy-revalidate",
+          },
+        }
       );
     }
 
     if (!stats || stats.length === 0) {
-      return NextResponse.json([]);
+      return NextResponse.json([], {
+        headers: {
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
+        },
+      });
     }
 
-    // 2) a leaderboardon megjelenő FID-ekhez lehúzzuk a userneveket
+    // 2) Username-ek lehúzása
     const fids = stats.map((s) => s.fid);
 
     const { data: users, error: usersErr } = await supabase
@@ -51,7 +67,7 @@ export async function GET() {
 
     if (usersErr) {
       console.error("leaderboard users error:", usersErr);
-      // ha ez elhasal, akkor is visszaadjuk a létra sort usernév nélkül
+      // ha ez elszáll, usernév nélkül is menjen
     }
 
     const usernameMap = new Map<number, string | null>();
@@ -59,7 +75,7 @@ export async function GET() {
       usernameMap.set(u.fid, u.username ?? null);
     });
 
-    // 3) összeállítjuk a front-end által várt struktúrát
+    // 3) Frontend által várt struktúra
     const rows = stats.map((s: any) => ({
       fid: s.fid,
       username: usernameMap.get(s.fid) ?? null,
@@ -70,12 +86,23 @@ export async function GET() {
       legendary_count: s.legendary_opens ?? 0,
     }));
 
-    return NextResponse.json(rows);
+    return NextResponse.json(rows, {
+      headers: {
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate, proxy-revalidate",
+      },
+    });
   } catch (err) {
     console.error("leaderboard route fatal error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      {
+        status: 500,
+        headers: {
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
+        },
+      }
     );
   }
 }
