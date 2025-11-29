@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
-const SUPABASE_URL = process.env.SUPABASE_URL!;
+
+// Itt is NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const runtime = "nodejs";
@@ -34,7 +36,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Megkeressük a payment rekordot
+    // 1) Payment keresése
     const { data: payment, error: payError } = await supabase
       .from("payments")
       .select("*")
@@ -61,7 +63,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "already_completed" });
     }
 
-    // 2) Lekérdezzük a Neynar-tól a tranzakciót
+    // 2) Neynar GET státusz
     const res = await fetch(
       `https://api.neynar.com/v2/farcaster/frame/transaction/pay?id=${encodeURIComponent(
         frameId
@@ -87,11 +89,9 @@ export async function POST(req: Request) {
     const data = await res.json();
     console.log("Neynar pay status payload:", JSON.stringify(data));
 
-    // A pontos struktúra függ a Neynar API-tól, ezért óvatosan:
     const frame = data.transaction_frame ?? data;
     const status = (frame.status as string | undefined)?.toLowerCase();
 
-    // Ha még nincs kész
     if (
       !status ||
       !["completed", "succeeded", "confirmed"].includes(status)
@@ -99,9 +99,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "pending" });
     }
 
-    // Ha ide eljutunk, sikeresnek tekintjük a fizetést
-
-    // Metadata visszaolvasása
+    // Metadata / payment info
     const md =
       frame.metadata ||
       frame.transaction?.metadata ||
@@ -120,11 +118,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3) Supabase jóváírás
+    // 3) Jóváírás Supabase-ben
     if (kind === "extra_picks") {
       const increment = packSize ?? 0;
       if (increment > 0) {
-        // Stats sor beolvasása
         const { data: statsRow, error: statsErr } = await supabase
           .from("stats")
           .select("extra_picks_remaining")
@@ -174,7 +171,7 @@ export async function POST(req: Request) {
       console.warn("Unknown payment kind in confirm:", kind);
     }
 
-    // 4) Payments státusz frissítés
+    // 4) Payment státusz frissítés
     const { error: statusErr } = await supabase
       .from("payments")
       .update({
