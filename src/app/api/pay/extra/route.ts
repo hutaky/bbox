@@ -1,5 +1,6 @@
 // src/app/api/pay/extra/route.ts
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
@@ -9,7 +10,12 @@ const PRICE_1 = Number(process.env.BBOX_EXTRA_PRICE_1 || "0.5");   // 1 pick
 const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 pick
 const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
 
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 export const runtime = "nodejs";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type Body = {
   fid: number;
@@ -64,7 +70,7 @@ export async function POST(req: Request) {
           network: "base",
           address: RECEIVER_ADDRESS,
           token_contract_address: USDC_CONTRACT,
-          amount, // USDC amount in whole units (USDC = 6 decimals, Neynar oldal kezeli)
+          amount, // USDC full units (Neynar oldalon van kezelve a decimális)
         },
       },
       config: {
@@ -72,8 +78,7 @@ export async function POST(req: Request) {
           {
             name: lineItemName,
             description: `Extra BBOX picks for FID ${fid}`,
-            image:
-              "https://box-sage.vercel.app/icon.png", // vagy bármilyen promó kép
+            image: "https://box-sage.vercel.app/icon.png",
           },
         ],
         action: {
@@ -82,7 +87,6 @@ export async function POST(req: Request) {
           button_color: "#0052FF",
         },
       },
-      // Opcionális: metadata, amit visszakapsz a webhookban
       metadata: {
         kind: "extra_picks",
         fid,
@@ -116,12 +120,26 @@ export async function POST(req: Request) {
     const frameUrl = data?.transaction_frame?.url as string | undefined;
     const frameId = data?.transaction_frame?.id as string | undefined;
 
-    if (!frameUrl) {
+    if (!frameUrl || !frameId) {
       console.error("Invalid Neynar pay response:", data);
       return NextResponse.json(
         { error: "Invalid Neynar response" },
         { status: 500 }
       );
+    }
+
+    // Mentjük a payments táblába pending státusszal
+    const { error: insertError } = await supabase.from("payments").insert({
+      fid,
+      kind: "extra_picks",
+      pack_size: packSize,
+      frame_id: frameId,
+      status: "pending",
+    });
+
+    if (insertError) {
+      console.error("Failed to insert payment record:", insertError);
+      // ettől még visszaadjuk a frameUrl-t, hogy tudjon fizetni
     }
 
     return NextResponse.json({
