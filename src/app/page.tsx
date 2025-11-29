@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
 
@@ -383,6 +384,22 @@ export default function HomePage() {
             or add <code>?fid=YOUR_FID</code> to the URL for testing.
           </p>
         )}
+
+        {/* BOTTOM NAV BUTTONS: Leaderboard + FAQ */}
+        <div className="flex gap-3 pt-2">
+          <Link
+            href="/leaderboard"
+            className="flex-1 rounded-full border border-gray-700 px-3 py-2 text-xs font-medium text-gray-200 text-center hover:border-baseBlue"
+          >
+            Leaderboard
+          </Link>
+          <Link
+            href="/faq"
+            className="flex-1 rounded-full border border-gray-700 px-3 py-2 text-xs font-medium text-gray-200 text-center hover:border-baseBlue"
+          >
+            FAQ
+          </Link>
+        </div>
       </div>
 
       {/* Result modal overlay */}
