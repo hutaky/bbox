@@ -13,6 +13,7 @@ export async function ensureUser(
     .maybeSingle();
 
   if (!existing) {
+    // új user létrehozása
     const { data: inserted } = await supabaseServer
       .from("users")
       .insert({
@@ -23,11 +24,13 @@ export async function ensureUser(
       .select("*")
       .single();
 
+    // alap user_stats – free_picks egyelőre 0, az első belépéskor kapja meg
     await supabaseServer.from("user_stats").insert({
       fid,
       total_points: 0,
       free_picks_remaining: 0,
-      extra_picks_balance: 0
+      extra_picks_balance: 0,
+      next_free_refill_at: null
     });
 
     return inserted;
@@ -67,6 +70,24 @@ export async function refreshFreePicksIfNeeded(fid: number) {
 
   const now = new Date();
 
+  // 1) Ha még soha nem volt refill (next_free_refill_at = null) ÉS nincs free pick,
+  //    akkor ez az első alkalom → adjuk oda a napi free pickeket
+  if (!stats.next_free_refill_at && stats.free_picks_remaining === 0) {
+    const freePicks = getDailyFreePicks(user.is_og);
+    const { data: updated } = await supabaseServer
+      .from("user_stats")
+      .update({
+        free_picks_remaining: freePicks,
+        updated_at: now.toISOString()
+      })
+      .eq("fid", fid)
+      .select("*")
+      .single();
+
+    return { user, stats: updated };
+  }
+
+  // 2) Normál refill logika: ha van next_free_refill_at, és már lejárt, és nincs free pick
   if (
     stats &&
     stats.next_free_refill_at &&
@@ -88,5 +109,6 @@ export async function refreshFreePicksIfNeeded(fid: number) {
     return { user, stats: updated };
   }
 
+  // 3) Egyébként marad a jelenlegi állapot
   return { user, stats };
 }
