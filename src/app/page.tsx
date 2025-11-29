@@ -39,6 +39,7 @@ export default function HomePage() {
   const [picking, setPicking] = useState(false);
   const [lastResult, setLastResult] = useState<PickResult | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
+  const [showBuyModal, setShowBuyModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
 
@@ -51,7 +52,7 @@ export default function HomePage() {
       try {
         await sdk.actions.ready();
       } catch (e) {
-        console.warn("sdk.actions.ready() failed (ok böngészőben):", e);
+        console.warn("sdk.actions.ready() failed (ok browser):", e);
       }
 
       try {
@@ -208,8 +209,10 @@ export default function HomePage() {
   }
 
   const canPick =
-    user &&
-    (user.freePicksRemaining > 0 || user.extraPicksBalance > 0);
+    !!(
+      user &&
+      (user.freePicksRemaining > 0 || user.extraPicksBalance > 0)
+    );
 
   const initializing = fid == null;
 
@@ -239,15 +242,17 @@ export default function HomePage() {
       <div className="w-full max-w-md space-y-5">
         {/* HEADER */}
         <header className="flex items-center justify-between">
-          {/* Logo + app name (balra) */}
+          {/* Logo + app name (left) */}
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-baseBlue to-purple-500 flex items-center justify-center text-xs font-bold">
-              B
-            </div>
+            <img
+              src="/icon.png"
+              alt="BBOX logo"
+              className="h-8 w-8 rounded-xl border border-gray-700 object-cover"
+            />
             <span className="text-xl font-semibold">BBOX</span>
           </div>
 
-          {/* User avatar + username (jobbra) */}
+          {/* User avatar + username (right) */}
           <div className="flex flex-col items-end gap-1">
             {viewerPfp ? (
               <img
@@ -283,7 +288,7 @@ export default function HomePage() {
             {/* INFO CARD */}
             <section className="rounded-2xl border border-gray-800 p-4 bg-gray-950/70 space-y-3">
               <div className="grid grid-cols-2 gap-3 text-sm">
-                {/* Total points (balra, egy sorban) */}
+                {/* Total points (left) */}
                 <div className="text-left">
                   <p className="text-xs text-gray-400">
                     Total points{" "}
@@ -293,7 +298,7 @@ export default function HomePage() {
                   </p>
                 </div>
 
-                {/* Extra picks (jobbra, egy sorban) */}
+                {/* Extra picks (right) */}
                 <div className="text-right">
                   <p className="text-xs text-gray-400">
                     Extra picks{" "}
@@ -303,7 +308,7 @@ export default function HomePage() {
                   </p>
                 </div>
 
-                {/* Free picks (balra, egy sorban) */}
+                {/* Free picks (left) */}
                 <div className="text-left">
                   <p className="text-xs text-gray-400">
                     Free picks{" "}
@@ -313,13 +318,14 @@ export default function HomePage() {
                   </p>
                 </div>
 
-                {/* Buy picks gomb (jobbra) */}
+                {/* Buy extra picks (right) */}
                 <div className="flex items-center justify-end">
                   <button
                     type="button"
+                    onClick={() => setShowBuyModal(true)}
                     className="rounded-full border border-baseBlue/70 px-3 py-1 text-xs font-semibold text-baseBlue hover:bg-baseBlue/10"
                   >
-                    Buy picks
+                    Buy extra picks
                   </button>
                 </div>
               </div>
@@ -336,6 +342,12 @@ export default function HomePage() {
                   <span className="font-mono">{countdown ?? "00:00:00"}</span>
                 </p>
               )}
+
+              {!canPick && (
+                <p className="text-xs text-red-400 mt-1">
+                  You have no picks left. Buy extra picks to continue opening.
+                </p>
+              )}
             </section>
 
             {/* BOX AREA */}
@@ -345,7 +357,7 @@ export default function HomePage() {
                 Each pick reveals one of three boxes. One pick = one opening.
               </p>
 
-              {/* Box ikonok */}
+              {/* Box icons */}
               <div className="grid grid-cols-3 gap-3 mt-3">
                 {[0, 1, 2].map(i => (
                   <button
@@ -362,14 +374,23 @@ export default function HomePage() {
                 ))}
               </div>
 
-              {/* Fő gomb */}
-              <button
-                disabled={!canPick || picking}
-                onClick={handlePick}
-                className="w-full mt-3 rounded-full bg-baseBlue py-2 text-sm font-semibold disabled:opacity-50"
-              >
-                {picking ? "Opening..." : "Random open"}
-              </button>
+              {/* Main action button */}
+              {canPick ? (
+                <button
+                  disabled={picking}
+                  onClick={handlePick}
+                  className="w-full mt-3 rounded-full bg-baseBlue py-2 text-sm font-semibold disabled:opacity-50"
+                >
+                  {picking ? "Opening..." : "Random open"}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowBuyModal(true)}
+                  className="w-full mt-3 rounded-full bg-purple-500 py-2 text-sm font-semibold text-black animate-pulse"
+                >
+                  Buy extra
+                </button>
+              )}
 
               {error && (
                 <p className="mt-3 text-xs text-red-400 text-center">{error}</p>
@@ -417,7 +438,7 @@ export default function HomePage() {
               </button>
             </div>
 
-            {/* Látványos eredmény box */}
+            {/* Result box */}
             <div className="rounded-xl border border-gray-700 bg-gray-900/80 p-3 text-center space-y-1">
               <p className="text-sm">
                 You opened a{" "}
@@ -453,6 +474,46 @@ export default function HomePage() {
               </button>
               <button
                 onClick={() => setShowResultModal(false)}
+                className="px-3 py-2 text-xs font-medium text-gray-300 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Buy extra modal */}
+      {showBuyModal && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
+          <div className="w-full max-w-sm mx-4 rounded-2xl border border-gray-800 bg-gray-950 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-100">
+                Buy extra picks
+              </h3>
+              <button
+                onClick={() => setShowBuyModal(false)}
+                className="text-gray-400 hover:text-gray-200 text-sm"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2 text-sm text-gray-200">
+              <p>
+                In future versions you&apos;ll be able to buy extra picks
+                directly inside BBOX using crypto.
+              </p>
+              <p>
+                In this alpha test build, extra picks can only be added
+                manually by the admin.
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                onClick={() => setShowBuyModal(false)}
                 className="px-3 py-2 text-xs font-medium text-gray-300 hover:text-white"
               >
                 Close
