@@ -37,20 +37,19 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState(false);
   const [lastResult, setLastResult] = useState<PickResult | null>(null);
+  const [showResultModal, setShowResultModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
 
   // 1) Farcaster MiniApp init + FID detektálás
   useEffect(() => {
     async function init() {
-      // jelezzük Farcasternek, hogy az app "ready" → splash screen eltűnik
       try {
         await sdk.actions.ready();
       } catch (e) {
-        console.warn("sdk.actions.ready() failed (ok böngészőben is):", e);
+        console.warn("sdk.actions.ready() failed (ok böngészőben):", e);
       }
 
-      // próbáljuk a FID-et a Frame/MiniApp contextből kiolvasni
       try {
         const ctx: any = await sdk.context;
         const viewerFid =
@@ -64,10 +63,9 @@ export default function HomePage() {
           return;
         }
       } catch (e) {
-        console.warn("sdk.context read failed, falling back to query/dev FID:", e);
+        console.warn("sdk.context read failed, fallback to query/dev fid:", e);
       }
 
-      // ha nem MiniApp környezet, akkor ?fid=... vagy dev fallback
       const fromQuery = getFidFromQuery();
       if (fromQuery) {
         setFid(fromQuery);
@@ -172,6 +170,7 @@ export default function HomePage() {
         };
         setUser(updated);
         setLastResult({ rarity: data.rarity, points: data.points });
+        setShowResultModal(true);
       }
     } catch (e: any) {
       console.error(e);
@@ -186,6 +185,19 @@ export default function HomePage() {
     (user.freePicksRemaining > 0 || user.extraPicksBalance > 0);
 
   const initializing = fid == null;
+
+  function handleShareResult() {
+    if (!lastResult) return;
+    const text = `I just opened a ${lastResult.rarity.toUpperCase()} box on BBOX and got +${lastResult.points} points 🔥`;
+    if (navigator.share) {
+      navigator
+        .share({ text })
+        .catch(() => {});
+    } else {
+      navigator.clipboard.writeText(text).catch(() => {});
+      alert("Share text copied to clipboard!");
+    }
+  }
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4">
@@ -266,52 +278,6 @@ export default function HomePage() {
                 {picking ? "Opening..." : "Open a box"}
               </button>
 
-              {lastResult && (
-                <div className="mt-4 rounded-lg border border-gray-800 p-3 text-sm space-y-1">
-                  <p>
-                    You opened a{" "}
-                    <span
-                      className={
-                        lastResult.rarity === "legendary"
-                          ? "text-legendary font-bold"
-                          : lastResult.rarity === "epic"
-                          ? "text-epic font-semibold"
-                          : lastResult.rarity === "rare"
-                          ? "text-rare font-semibold"
-                          : "text-gray-200 font-medium"
-                      }
-                    >
-                      {lastResult.rarity.toUpperCase()} box
-                    </span>
-                    !
-                  </p>
-                  <p>
-                    Reward:{" "}
-                    <span className="font-semibold text-baseBlue">
-                      +{lastResult.points} points
-                    </span>
-                  </p>
-                  <button
-                    className="mt-2 inline-flex items-center rounded-full border border-gray-700 px-3 py-1 text-xs text-gray-200 hover:border-baseBlue"
-                    onClick={() => {
-                      const text = `I just opened a ${lastResult.rarity.toUpperCase()} box on BBOX and got +${lastResult.points} points 🔥`;
-                      if (navigator.share) {
-                        navigator
-                          .share({
-                            text
-                          })
-                          .catch(() => {});
-                      } else {
-                        navigator.clipboard.writeText(text).catch(() => {});
-                        alert("Share text copied to clipboard!");
-                      }
-                    }}
-                  >
-                    Share result
-                  </button>
-                </div>
-              )}
-
               {error && (
                 <p className="mt-3 text-xs text-red-400 text-center">{error}</p>
               )}
@@ -326,6 +292,67 @@ export default function HomePage() {
           </p>
         )}
       </div>
+
+      {/* Result modal overlay */}
+      {showResultModal && lastResult && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70">
+          <div className="w-full max-w-sm mx-4 rounded-2xl border border-gray-800 bg-gray-950 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-100">
+                Box result
+              </h3>
+              <button
+                onClick={() => setShowResultModal(false)}
+                className="text-gray-400 hover:text-gray-200 text-sm"
+                aria-label="Close result"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-1 text-sm">
+              <p>
+                You opened a{" "}
+                <span
+                  className={
+                    lastResult.rarity === "legendary"
+                      ? "text-legendary font-bold"
+                      : lastResult.rarity === "epic"
+                      ? "text-epic font-semibold"
+                      : lastResult.rarity === "rare"
+                      ? "text-rare font-semibold"
+                      : "text-gray-200 font-medium"
+                  }
+                >
+                  {lastResult.rarity.toUpperCase()} box
+                </span>
+                !
+              </p>
+              <p>
+                Reward:{" "}
+                <span className="font-semibold text-baseBlue">
+                  +{lastResult.points} points
+                </span>
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={handleShareResult}
+                className="flex-1 inline-flex items-center justify-center rounded-full border border-gray-700 px-3 py-2 text-xs font-medium text-gray-200 hover:border-baseBlue"
+              >
+                Share result
+              </button>
+              <button
+                onClick={() => setShowResultModal(false)}
+                className="px-3 py-2 text-xs font-medium text-gray-300 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
