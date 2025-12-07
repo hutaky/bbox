@@ -1,12 +1,12 @@
 // src/app/page.tsx
 "use client";
 
-const BBOX_URL = "https://box-sage.vercel.app"; // IDE a saját deploy URL-ed
-
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
+
+const BBOX_URL = "https://box-sage.vercel.app"; // IDE a saját deploy URL-ed
 
 type BoxRarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
 
@@ -113,7 +113,6 @@ export default function HomePage() {
       try {
         const context: any = await sdk.context;
 
-        // A Farcaster user több helyen is jöhet – mindet próbáljuk:
         const ctxUser =
           context?.user ??
           context?.viewer ??
@@ -121,9 +120,7 @@ export default function HomePage() {
           null;
 
         const ctxFid: number | null =
-          ctxUser?.fid ??
-          context?.frameData?.fid ??
-          null;
+          ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
           username:
@@ -235,30 +232,27 @@ export default function HomePage() {
   }
 
   // ---- Sharing ----
-async function handleShareResult() {
-  if (!lastResult || !user) return;
+  async function handleShareResult() {
+    if (!lastResult || !user) return;
 
-  const rarityLabel = lastResult.rarity.toLowerCase();
-  const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
+    const rarityLabel = lastResult.rarity.toLowerCase();
+    const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
 
-  // szöveg + direkt link az apphoz
-  const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
+    const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
 
-  // Farcaster compose URL – az embeds[] param miatt a frame linkként is bekerül
-  const composeUrl = `https://warpcast.com/~/compose?text=${encodeURIComponent(
-    fullText
-  )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
+    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
+      fullText
+    )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
 
-  try {
-    await sdk.actions.openUrl(composeUrl);
-  } catch (e) {
-    console.error("Share failed:", e);
-    alert("Could not open share dialog.");
+    try {
+      await sdk.actions.openUrl(composeUrl);
+    } catch (e) {
+      console.error("Share failed:", e);
+      alert("Could not open share dialog.");
+    }
   }
-}
 
-
-  // ---- Neynar Pay: extra picks (egyelőre letiltott backendgel) ----
+  // ---- Neynar Pay: extra picks ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -282,8 +276,6 @@ async function handleShareResult() {
         );
         return;
       }
-
-      // Ha később újra bekötjük, itt nyitjuk meg a fizetési framet.
     } catch (err) {
       console.error("Error in handleBuyExtra:", err);
       setBuyError("Something went wrong, try again.");
@@ -292,7 +284,7 @@ async function handleShareResult() {
     }
   }
 
-  // ---- Neynar Pay: OG rank (egyelőre letiltott backendgel) ----
+  // ---- Neynar Pay: OG rank ----
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -372,8 +364,7 @@ async function handleShareResult() {
   }
 
   const displayName =
-    user?.username ||
-    (fid ? `fid:${fid}` : "Guest");
+    user?.username || (fid ? `fid:${fid}` : "Guest");
 
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
   const rankLabel = user?.isOg
@@ -410,7 +401,7 @@ async function handleShareResult() {
               <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
                 <span>BBOX</span>
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 border border-emerald-400/60 text-emerald-200">
-                  Daily Box
+                  Season 0
                 </span>
               </h1>
               <p className="text-[11px] text-gray-400 flex items-center gap-1">
@@ -451,21 +442,19 @@ async function handleShareResult() {
           <div className="flex items-start justify-between gap-3 relative z-10">
             <div className="flex-1">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
-                <span className="tracking-[0.18em]">
-                  TOTAL POINTS
-                </span>
+                <span className="tracking-[0.18em]">TOTAL POINTS:</span>
                 <span className="font-semibold text-[13px] text-[#E6EBFF]">
                   {user?.totalPoints ?? 0}
                 </span>
               </div>
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
-                <span>Extra picks</span>
+                <span>Extra picks:</span>
                 <span className="font-medium text-emerald-300">
                   {user?.extraPicksRemaining ?? 0}
                 </span>
               </div>
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
-                <span>Free picks</span>
+                <span>Free picks:</span>
                 <span className="font-medium text-sky-300">
                   {user?.freePicksRemaining ?? 0}
                 </span>
@@ -529,17 +518,42 @@ async function handleShareResult() {
                 key={index}
                 onClick={() => handlePick(index)}
                 disabled={!canPick || picking}
-                className={`relative aspect-square rounded-2xl flex items-center justify-center border text-3xl transition transform active:scale-95 overflow-hidden
+                className={`group relative aspect-square rounded-2xl overflow-hidden border transition-all duration-300
                   ${
                     !canPick || picking
-                      ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] text-zinc-600 cursor-not-allowed"
-                      : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:from-[#111A4D]"
+                      ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] cursor-not-allowed opacity-60"
+                      : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
                   }`}
               >
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(0,194,255,0.18),transparent_55%),radial-gradient(circle_at_bottom,_rgba(124,58,237,0.25),transparent_55%)] pointer-events-none" />
-                <span className="relative text-[34px]">
-                  📦
-                </span>
+                {/* Glow layer */}
+                <div className="absolute inset-0 bg-gradient-to-br from-baseBlue/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                {/* Shine sweep */}
+                <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
+
+                {/* Box icon */}
+                <div className="relative z-10 h-full flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-baseBlue/80 to-baseBlue/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-8 h-8 text-white/90"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                    >
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                      <path d="M3.3 7L12 12l8.7-5" />
+                      <path d="M12 22V12" />
+                    </svg>
+                  </div>
+                </div>
+
+                {/* Footer label */}
+                <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
+                  <span className="text-[11px] text-gray-300 group-hover:text-white transition">
+                    Tap to open
+                  </span>
+                </div>
               </button>
             ))}
           </div>
