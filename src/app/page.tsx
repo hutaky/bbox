@@ -101,30 +101,39 @@ export default function HomePage() {
   const [buyError, setBuyError] = useState<string | null>(null);
 
   // ---- User state betöltése ----
-  async function loadUserState(currentFid: number | null) {
-    if (!currentFid) return;
-    try {
-      const res = await fetch("/api/me", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid: currentFid }),
-      });
-      const data = await res.json();
-      setUser(data);
+  async function loadUserState(
+  currentFid: number | null,
+  profile?: { username?: string | null; pfpUrl?: string | null }
+) {
+  if (!currentFid) return;
+  try {
+    const res = await fetch("/api/me", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fid: currentFid,
+        username: profile?.username ?? null,
+        pfpUrl: profile?.pfpUrl ?? null,
+      }),
+    });
 
-      if (data?.nextFreePickAt) {
-        setCountdown(formatCountdown(data.nextFreePickAt));
-      } else {
-        setCountdown("Ready");
-      }
+    const data = await res.json();
+    setUser(data);
 
-      if (data?.lastResult) {
-        setLastResult(data.lastResult);
-      }
-    } catch (err) {
-      console.error("Failed to load user state:", err);
+    if (data?.nextFreePickAt) {
+      setCountdown(formatCountdown(data.nextFreePickAt));
+    } else {
+      setCountdown("Ready");
     }
+
+    if (data?.lastResult) {
+      setLastResult(data.lastResult);
+    }
+  } catch (err) {
+    console.error("Failed to load user state:", err);
   }
+}
+
 
   // ---- Mini app init (Farcaster SDK) ----
   useEffect(() => {
@@ -134,23 +143,38 @@ export default function HomePage() {
       try {
         await sdk.actions.ready();
 
-        const context = await sdk.context;
-        const ctxFid = context?.user?.fid ?? null;
-        const queryFid = getFidFromQuery();
-        const finalFid = ctxFid || queryFid;
+const context = await sdk.context;
+const ctxUser: any = context?.user;
+const ctxFid = ctxUser?.fid ?? null;
+const queryFid = getFidFromQuery();
+const finalFid = ctxFid || queryFid;
 
-        if (!cancelled) {
-          setFid(finalFid);
-          await loadUserState(finalFid);
-        }
-      } catch (e) {
-        console.error("Error initializing mini app SDK:", e);
-        const queryFid = getFidFromQuery();
-        if (!cancelled) {
-          setFid(queryFid);
-          await loadUserState(queryFid);
-        }
-      } finally {
+// Profiladatok Farcaster contextből
+const profile = {
+  username:
+    ctxUser?.username ??
+    ctxUser?.displayName ??
+    ctxUser?.display_name ??
+    null,
+  pfpUrl:
+    ctxUser?.pfpUrl ??
+    ctxUser?.pfp_url ??
+    null,
+};
+
+if (!cancelled) {
+  setFid(finalFid);
+  await loadUserState(finalFid, profile);
+}
+} catch (e) {
+  console.error("Error initializing mini app SDK:", e);
+  const queryFid = getFidFromQuery();
+  if (!cancelled) {
+    setFid(queryFid);
+    await loadUserState(queryFid, undefined);
+  }
+}
+finally {
         if (!cancelled) setLoading(false);
       }
     }
