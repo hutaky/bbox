@@ -2,13 +2,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
+export const runtime = "nodejs";
 
-// Ugyanaz a Supabase config, mint /api/pick-ben
+// ugyanaz az URL, mint a frontendnél
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-export const runtime = "nodejs";
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -21,9 +20,8 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as Body | null;
-    const fid = body?.fid;
-    const frameId = body?.frameId;
+    const body = (await req.json()) as Body;
+    const { fid, frameId } = body;
 
     if (!fid || !frameId) {
       return NextResponse.json(
@@ -63,7 +61,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "already_completed" });
     }
 
-    // 2) Neynar fizetés státusz lekérdezése
+    // 2) Neynar GET – tranzakció státusz lekérése
     const res = await fetch(
       `https://api.neynar.com/v2/farcaster/frame/transaction/pay?id=${encodeURIComponent(
         frameId
@@ -92,15 +90,15 @@ export async function POST(req: Request) {
     const frame = data.transaction_frame ?? data;
     const status = (frame.status as string | undefined)?.toLowerCase();
 
+    // ha még nincs kész → pending
     if (
       !status ||
       !["completed", "succeeded", "confirmed"].includes(status)
     ) {
-      // még nem végleges a fizetés
       return NextResponse.json({ status: "pending" });
     }
 
-    // 3) Metadata, hogy mit vett a user
+    // 3) Metadata + pay típus
     const md =
       frame.metadata ||
       frame.transaction?.metadata ||
@@ -112,19 +110,15 @@ export async function POST(req: Request) {
     const fidMeta: number | undefined = md.fid;
 
     if (fidMeta && fidMeta !== fid) {
-      console.warn(
-        "FID mismatch between metadata and request:",
+      console.warn("FID mismatch between metadata and request:", {
         fidMeta,
-        fid
-      );
+        fid,
+      });
     }
-
-    const nowIso = new Date().toISOString();
 
     // 4) Jóváírás Supabase-ben
     if (kind === "extra_picks") {
       const increment = packSize ?? 0;
-
       if (increment > 0) {
         const { data: statsRow, error: statsErr } = await supabase
           .from("user_stats")
@@ -136,25 +130,22 @@ export async function POST(req: Request) {
           console.error("user_stats fetch error:", statsErr);
         } else if (statsRow) {
           const current = statsRow.extra_picks_remaining ?? 0;
-
           const { error: updateErr } = await supabase
             .from("user_stats")
             .update({
               extra_picks_remaining: current + increment,
-              updated_at: nowIso,
+              updated_at: new Date().toISOString(),
             })
             .eq("fid", fid);
 
           if (updateErr) {
-            console.error("user_stats update error (extra picks):", updateErr);
+            console.error("user_stats update error:", updateErr);
           } else {
-            console.log(
-              `Added ${increment} extra picks to fid ${fid}`
-            );
+            console.log(`Added ${increment} extra picks to fid ${fid}`);
           }
         } else {
           console.warn(
-            "No user_stats row for fid in confirm, consider ensuring creation in /api/me"
+            "No user_stats row for fid in confirm, consider creating it earlier"
           );
         }
       }
@@ -163,7 +154,7 @@ export async function POST(req: Request) {
         .from("users")
         .update({
           is_og: true,
-          updated_at: nowIso,
+          updated_at: new Date().toISOString(),
         })
         .eq("fid", fid);
 
@@ -181,7 +172,7 @@ export async function POST(req: Request) {
       .from("payments")
       .update({
         status: "completed",
-        updated_at: nowIso,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", payment.id);
 
