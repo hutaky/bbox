@@ -83,20 +83,12 @@ export default function LeaderboardPage() {
           ctx?.viewerContext?.user?.pfp_url ??
           null;
 
-        if (uname && typeof uname === "string") {
-          setViewerName(uname);
-        } else {
-          setViewerName("BBOX player");
-        }
-
-        if (pfp && typeof pfp === "string") {
-          setViewerPfp(pfp);
-        }
+        setViewerName(uname || "BBOX player");
+        if (pfp && typeof pfp === "string") setViewerPfp(pfp);
       } catch (e) {
         console.warn("sdk.context read failed on Leaderboard:", e);
         setViewerName((prev) => prev || "BBOX player");
 
-        // ha nincs sdk.context, legalább a query ?fid-et próbáljuk
         if (!fid) {
           const q = getFidFromQuery();
           if (q) setFid(q);
@@ -162,52 +154,59 @@ export default function LeaderboardPage() {
     loadMyRank();
   }, [fid]);
 
-  // ---- LOADING SCREEN ----
+  // ---- közös HEADER komponens ----
+  function renderHeader() {
+    return (
+      <header className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <img
+            src="/icon.png"
+            alt="BBOX logo"
+            className="w-9 h-9 rounded-xl border border-[#23A9F2]/50 shadow-[0_0_18px_rgba(35,169,242,0.45)]"
+          />
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
+              <span className="px-2 py-[2px] rounded-full text-[10px] font-semibold bg-emerald-500/10 border border-emerald-400/60 text-emerald-200">
+                Daily Box
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-400 flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(74,222,128,0.8)]" />
+              Daily Based Box game
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {viewerPfp ? (
+            <img
+              src={viewerPfp}
+              alt={displayName}
+              className="w-9 h-9 rounded-full border border-[#23A9F2]/60 object-cover shadow-[0_0_12px_rgba(35,169,242,0.65)]"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-slate-600 to-slate-900 border border-[#23A9F2]/60 flex items-center justify-center text-sm font-semibold">
+              {avatarInitial}
+            </div>
+          )}
+          <div className="text-right">
+            <div className="text-sm font-medium truncate">{displayName}</div>
+            {fid && (
+              <div className="text-[11px] text-gray-500">FID #{fid}</div>
+            )}
+          </div>
+        </div>
+      </header>
+    );
+  }
+
+  // ---- LOADING / ERROR ----
   if (loading) {
     return (
       <main className="min-h-screen bg-black text-white p-4 flex flex-col items-center">
         <div className="w-full max-w-md space-y-4">
-          {/* HEADER – mint a főoldalon */}
-          <header className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <img
-                src="/icon.png"
-                alt="BBOX logo"
-                className="w-8 h-8 rounded-lg border border-baseBlue/40"
-              />
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
-                <p className="text-[11px] text-gray-400">
-                  Daily Based Box game
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {viewerPfp ? (
-                <img
-                  src={viewerPfp}
-                  alt={displayName}
-                  className="w-9 h-9 rounded-full border border-baseBlue/40 object-cover"
-                />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-baseBlue/40 flex items-center justify-center text-sm font-semibold">
-                  {avatarInitial}
-                </div>
-              )}
-              <div className="text-right">
-                <div className="text-sm font-medium truncate">
-                  {displayName}
-                </div>
-                {fid && (
-                  <div className="text-[11px] text-gray-500">
-                    FID #{fid}
-                  </div>
-                )}
-              </div>
-            </div>
-          </header>
-
+          {renderHeader()}
           <p className="text-sm text-gray-400 text-center mt-4">
             Loading leaderboard…
           </p>
@@ -216,53 +215,13 @@ export default function LeaderboardPage() {
     );
   }
 
-  // ---- ERROR SCREEN ----
   if (error) {
     return (
       <main className="min-h-screen bg-black text-white p-4 flex flex-col items-center">
         <div className="w-full max-w-md space-y-4">
-          {/* HEADER */}
-          <header className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <img
-                src="/icon.png"
-                alt="BBOX logo"
-                className="w-8 h-8 rounded-lg border border-baseBlue/40"
-              />
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
-                <p className="text-[11px] text-gray-400">
-                  Daily Based Box game
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {viewerPfp ? (
-                <img
-                  src={viewerPfp}
-                  alt={displayName}
-                  className="w-9 h-9 rounded-full border border-baseBlue/40 object-cover"
-                />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-baseBlue/40 flex items-center justify-center text-sm font-semibold">
-                  {avatarInitial}
-                </div>
-              )}
-              <div className="text-right">
-                <div className="text-sm font-medium truncate">
-                  {displayName}
-                </div>
-                {fid && (
-                  <div className="text-[11px] text-gray-500">
-                    FID #{fid}
-                  </div>
-                )}
-              </div>
-            </div>
-          </header>
+          {renderHeader()}
 
-          {/* Page top bar */}
-          <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center justify-between mt-1">
             <Link
               href="/"
               className="text-xs text-gray-300 hover:text-white inline-flex items-center gap-1"
@@ -275,7 +234,7 @@ export default function LeaderboardPage() {
             </span>
           </div>
 
-          <p className="text-sm text-red-400 mt-2">{error}</p>
+          <p className="text-sm text-red-400 mt-3">{error}</p>
         </div>
       </main>
     );
@@ -285,47 +244,10 @@ export default function LeaderboardPage() {
   return (
     <main className="min-h-screen bg-black text-white p-4 flex flex-col items-center">
       <div className="w-full max-w-md space-y-4">
-        {/* HEADER – ugyanaz, mint a főoldalon */}
-        <header className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <img
-              src="/icon.png"
-              alt="BBOX logo"
-              className="w-8 h-8 rounded-lg border border-baseBlue/40"
-            />
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
-              <p className="text-[11px] text-gray-400">
-                Daily Based Box game
-              </p>
-            </div>
-          </div>
+        {renderHeader()}
 
-          <div className="flex items-center gap-2">
-            {viewerPfp ? (
-              <img
-                src={viewerPfp}
-                alt={displayName}
-                className="w-9 h-9 rounded-full border border-baseBlue/40 object-cover"
-              />
-            ) : (
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-baseBlue/40 flex items-center justify-center text-sm font-semibold">
-                {avatarInitial}
-              </div>
-            )}
-            <div className="text-right">
-              <div className="text-sm font-medium truncate">
-                {displayName}
-              </div>
-              {fid && (
-                <div className="text-[11px] text-gray-500">FID #{fid}</div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* Page top bar */}
-        <div className="flex items-center justify-between mt-2">
+        {/* top bar */}
+        <div className="flex items-center justify-between mt-1">
           <Link
             href="/"
             className="text-xs text-gray-300 hover:text-white inline-flex items-center gap-1"
@@ -338,19 +260,19 @@ export default function LeaderboardPage() {
           </span>
         </div>
 
-        {/* YOUR RANK BOX */}
-        <section className="mt-2 mb-1 rounded-2xl border border-baseBlue/50 bg-baseBlue/10 px-4 py-3">
-          <p className="text-xs text-gray-300 mb-1">
+        {/* YOUR RANK CARD – neon kártya */}
+        <section className="mt-3 rounded-3xl border border-[#1F6DF2]/60 bg-gradient-to-br from-[#0B1020] via-[#050816] to-black px-4 py-3 shadow-[0_0_40px_rgba(31,109,242,0.45)]">
+          <p className="text-[11px] text-gray-300 mb-1">
             Your rank is:
           </p>
           <div className="flex items-baseline justify-between">
-            <div className="flex items-baseline gap-1">
-              <span className="text-lg font-bold text-baseBlue">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-extrabold text-[#23A9F2] leading-none">
                 {myRank?.rank ?? "—"}
               </span>
-              <span className="text-xs text-gray-400">/ all players</span>
+              <span className="text-[11px] text-gray-400">/ all players</span>
             </div>
-            <span className="text-xs text-gray-300">
+            <span className="text-xs text-gray-200">
               {myRank?.total_points ?? 0} pts
             </span>
           </div>
@@ -363,33 +285,51 @@ export default function LeaderboardPage() {
           )}
         </section>
 
-        {/* LEADERBOARD LIST */}
-        <div className="space-y-3 mt-1">
-          {rows.map((r, index) => (
-            <div
-              key={r.fid}
-              className="rounded-xl border border-gray-800 bg-gray-950/80 p-4 space-y-1"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-base font-semibold text-baseBlue">
-                    #{index + 1}
-                  </span>
-                  <span className="font-medium">
-                    {r.username || `fid:${r.fid}`}
+        {/* LISTA */}
+        <div className="space-y-3 mt-2">
+          {rows.map((r, index) => {
+            const isMe = fid && r.fid === fid;
+            const label = r.username || `fid_${r.fid}`;
+            const rarityLine = `C ${r.common_count ?? 0} · R ${
+              r.rare_count ?? 0
+            } · E ${r.epic_count ?? 0} · L ${r.legendary_count ?? 0}`;
+
+            return (
+              <div
+                key={r.fid}
+                className={`rounded-3xl px-4 py-3 border transition ${
+                  isMe
+                    ? "border-[#23A9F2] bg-gradient-to-r from-[#071125] via-[#020617] to-black shadow-[0_0_30px_rgba(35,169,242,0.5)]"
+                    : "border-slate-800 bg-gradient-to-r from-[#020617] via-[#020617] to-black"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-semibold ${
+                        index === 0
+                          ? "bg-[#23A9F2]/20 text-[#23A9F2] border border-[#23A9F2]/70"
+                          : "bg-slate-800/60 text-slate-200"
+                      }`}
+                    >
+                      #{index + 1}
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-sm font-semibold">
+                        {label}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {rarityLine}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-sm font-bold text-[#1F6DF2]">
+                    {r.total_points ?? 0} pts
                   </span>
                 </div>
-                <span className="text-baseBlue font-semibold">
-                  {r.total_points ?? 0} pts
-                </span>
               </div>
-
-              <div className="text-xs text-gray-400">
-                C {r.common_count ?? 0} · R {r.rare_count ?? 0} · E{" "}
-                {r.epic_count ?? 0} · L {r.legendary_count ?? 0}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </main>
