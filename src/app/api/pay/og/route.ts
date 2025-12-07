@@ -1,13 +1,21 @@
 // src/app/api/pay/og/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 const OG_PRICE = Number(process.env.BBOX_OG_PRICE || "5.0");
 
+// Ugyanaz a Supabase konfig, mint máshol
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 export const runtime = "nodejs";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
 type Body = {
   fid: number;
@@ -94,8 +102,6 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
-    const supabase = supabaseServer;
 
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
