@@ -1,7 +1,7 @@
-const BBOX_URL = "https://box-sage.vercel.app"; // IDE a saját deploy URL-ed
-
 // src/app/page.tsx
 "use client";
+
+const BBOX_URL = "https://box-sage.vercel.app"; // IDE a saját deploy URL-ed
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
