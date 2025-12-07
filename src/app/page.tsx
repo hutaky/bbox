@@ -40,49 +40,12 @@ function getFidFromQuery(): number | null {
   return Number.isFinite(fid) ? fid : null;
 }
 
-// ---- Account rank név (Based / PRO / OG / PRO OG) ----
-function getAccountRank(user: ApiUserState | null): string {
-  if (!user) return "BOX Based";
-  if (user.isPro && user.isOg) return "BOX PRO OG";
-  if (user.isOg) return "BOX OG";
-  if (user.isPro) return "BOX PRO";
-  return "BOX Based";
-}
-
-// ---- Tier (ligák) a pontszám alapján ----
-function getTier(totalPoints: number | undefined) {
-  const pts = totalPoints ?? 0;
-
-  if (pts >= 30000) {
-    return {
-      name: "Platinum League",
-      badgeClass:
-        "bg-gradient-to-r from-cyan-400/20 via-blue-500/20 to-purple-500/20 border border-cyan-400/60",
-      colorClass: "text-cyan-200",
-    };
-  }
-  if (pts >= 20000) {
-    return {
-      name: "Gold League",
-      badgeClass:
-        "bg-gradient-to-r from-amber-400/20 via-yellow-500/20 to-orange-500/20 border border-amber-400/60",
-      colorClass: "text-amber-200",
-    };
-  }
-  if (pts >= 10000) {
-    return {
-      name: "Silver League",
-      badgeClass:
-        "bg-gradient-to-r from-slate-200/15 via-slate-400/15 to-slate-200/15 border border-slate-300/60",
-      colorClass: "text-slate-100",
-    };
-  }
-  return {
-    name: "Bronze League",
-    badgeClass:
-      "bg-gradient-to-r from-amber-700/30 via-orange-700/20 to-amber-800/30 border border-amber-500/60",
-    colorClass: "text-amber-100",
-  };
+// Liga meghatározása pontszám alapján
+function getLeagueFromPoints(points: number): string {
+  if (points >= 30000) return "Platinum League";
+  if (points >= 20000) return "Gold League";
+  if (points >= 10000) return "Silver League";
+  return "Bronze League";
 }
 
 export default function HomePage() {
@@ -102,38 +65,37 @@ export default function HomePage() {
 
   // ---- User state betöltése ----
   async function loadUserState(
-  currentFid: number | null,
-  profile?: { username?: string | null; pfpUrl?: string | null }
-) {
-  if (!currentFid) return;
-  try {
-    const res = await fetch("/api/me", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fid: currentFid,
-        username: profile?.username ?? null,
-        pfpUrl: profile?.pfpUrl ?? null,
-      }),
-    });
+    currentFid: number | null,
+    profile?: { username?: string | null; pfpUrl?: string | null }
+  ) {
+    if (!currentFid) return;
+    try {
+      const res = await fetch("/api/me", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fid: currentFid,
+          username: profile?.username ?? null,
+          pfpUrl: profile?.pfpUrl ?? null,
+        }),
+      });
 
-    const data = await res.json();
-    setUser(data);
+      const data = await res.json();
+      setUser(data);
 
-    if (data?.nextFreePickAt) {
-      setCountdown(formatCountdown(data.nextFreePickAt));
-    } else {
-      setCountdown("Ready");
+      if (data?.nextFreePickAt) {
+        setCountdown(formatCountdown(data.nextFreePickAt));
+      } else {
+        setCountdown("Ready");
+      }
+
+      if (data?.lastResult) {
+        setLastResult(data.lastResult);
+      }
+    } catch (err) {
+      console.error("Failed to load user state:", err);
     }
-
-    if (data?.lastResult) {
-      setLastResult(data.lastResult);
-    }
-  } catch (err) {
-    console.error("Failed to load user state:", err);
   }
-}
-
 
   // ---- Mini app init (Farcaster SDK) ----
   useEffect(() => {
@@ -142,44 +104,64 @@ export default function HomePage() {
     async function init() {
       try {
         await sdk.actions.ready();
+      } catch (e) {
+        console.warn("sdk.actions.ready() failed on main page:", e);
+      }
 
-const context = await sdk.context;
-const ctxUser: any = context?.user;
-const ctxFid = ctxUser?.fid ?? null;
-const queryFid = getFidFromQuery();
-const finalFid = ctxFid || queryFid;
+      try {
+        const context: any = await sdk.context;
 
-// Profiladatok Farcaster contextből
-const profile = {
-  username:
-    ctxUser?.username ??
-    ctxUser?.displayName ??
-    ctxUser?.display_name ??
-    null,
-  pfpUrl:
-    ctxUser?.pfpUrl ??
-    ctxUser?.pfp_url ??
-    null,
-};
+        // A Farcaster user több helyen is jöhet – mindet próbáljuk:
+        const ctxUser =
+          context?.user ??
+          context?.viewer ??
+          context?.viewerContext?.user ??
+          null;
 
-if (!cancelled) {
-  setFid(finalFid);
-  await loadUserState(finalFid, profile);
-}
-} catch (e) {
-  console.error("Error initializing mini app SDK:", e);
-  const queryFid = getFidFromQuery();
-  if (!cancelled) {
-    setFid(queryFid);
-    await loadUserState(queryFid, undefined);
-  }
-}
-finally {
+        const ctxFid: number | null =
+          ctxUser?.fid ??
+          context?.frameData?.fid ??
+          null;
+
+        const profile = {
+          username:
+            ctxUser?.username ??
+            ctxUser?.displayName ??
+            ctxUser?.display_name ??
+            ctxUser?.name ??
+            null,
+          pfpUrl:
+            ctxUser?.pfpUrl ??
+            ctxUser?.pfp_url ??
+            ctxUser?.pfp?.url ??
+            null,
+        };
+
+        const queryFid = getFidFromQuery();
+        const finalFid = ctxFid || queryFid;
+
+        if (!cancelled) {
+          setFid(finalFid);
+          await loadUserState(finalFid, profile);
+        }
+      } catch (e) {
+        console.error("Error initializing mini app SDK (context):", e);
+        const queryFid = getFidFromQuery();
+        if (!cancelled) {
+          setFid(queryFid);
+          await loadUserState(queryFid, undefined);
+        }
+      } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    init();
+    if (typeof window !== "undefined") {
+      void init();
+    } else {
+      setLoading(false);
+    }
+
     return () => {
       cancelled = true;
     };
@@ -233,8 +215,6 @@ finally {
         rareOpens: data.rareOpens,
         epicOpens: data.epicOpens,
         legendaryOpens: data.legendaryOpens,
-        isOg: user.isOg,
-        isPro: user.isPro,
       };
 
       setUser(updated);
@@ -268,7 +248,7 @@ finally {
     }
   }
 
-  // ---- Neynar Pay: extra picks ----
+  // ---- Neynar Pay: extra picks (egyelőre letiltott backendgel) ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -278,37 +258,22 @@ finally {
       setBuyLoading(true);
       setBuyError(null);
 
-      const res = await fetch("/api/pay/extra", {
+      const res = await fetch("/api/buy/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fid, packSize }),
       });
 
       const data = await res.json();
-
-      if (!res.ok || !data.frameUrl || !data.frameId) {
+      if (!res.ok) {
         console.error("Failed to create pay frame:", data);
-        setBuyError(data.error ?? "Payment creation failed.");
+        setBuyError(
+          data.error ?? "Purchases are currently disabled. Try again later."
+        );
         return;
       }
 
-      await sdk.actions.openUrl(data.frameUrl);
-
-      const confirmRes = await fetch("/api/pay/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid, frameId: data.frameId }),
-      });
-
-      const confirmData = await confirmRes.json();
-      if (!confirmRes.ok) {
-        console.error("Confirm error:", confirmData);
-        setBuyError(confirmData.error ?? "Payment confirm failed.");
-      } else if (confirmData.status === "completed") {
-        await loadUserState(fid);
-      } else if (confirmData.status === "pending") {
-        console.log("Payment still pending.");
-      }
+      // Ha később újra bekötjük, itt nyitjuk meg a fizetési framet.
     } catch (err) {
       console.error("Error in handleBuyExtra:", err);
       setBuyError("Something went wrong, try again.");
@@ -317,7 +282,7 @@ finally {
     }
   }
 
-  // ---- Neynar Pay: OG rank ----
+  // ---- Neynar Pay: OG rank (egyelőre letiltott backendgel) ----
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -327,36 +292,19 @@ finally {
       setBuyLoading(true);
       setBuyError(null);
 
-      const res = await fetch("/api/pay/og", {
+      const res = await fetch("/api/buy/og", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fid }),
       });
 
       const data = await res.json();
-
-      if (!res.ok || !data.frameUrl || !data.frameId) {
+      if (!res.ok) {
         console.error("Failed to create OG pay frame:", data);
-        setBuyError(data.error ?? "OG payment creation failed.");
+        setBuyError(
+          data.error ?? "OG upgrades are currently disabled. Try again later."
+        );
         return;
-      }
-
-      await sdk.actions.openUrl(data.frameUrl);
-
-      const confirmRes = await fetch("/api/pay/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid, frameId: data.frameId }),
-      });
-
-      const confirmData = await confirmRes.json();
-      if (!confirmRes.ok) {
-        console.error("OG confirm error:", confirmData);
-        setBuyError(confirmData.error ?? "OG payment confirm failed.");
-      } else if (confirmData.status === "completed") {
-        await loadUserState(fid);
-      } else if (confirmData.status === "pending") {
-        console.log("OG payment still pending.");
       }
     } catch (err) {
       console.error("Error in handleBuyOg:", err);
@@ -366,7 +314,7 @@ finally {
     }
   }
 
-  // ---- UI helpers (rarity badge) ----
+  // ---- UI helpers ----
   function renderRarityLabel(rarity: BoxRarity) {
     switch (rarity) {
       case "COMMON":
@@ -384,167 +332,159 @@ finally {
 
   function renderRarityBadge(rarity: BoxRarity) {
     const baseClass =
-      "px-3 py-1 rounded-full text-xs font-semibold border shadow-[0_0_20px_rgba(37,99,235,0.35)]";
+      "px-2 py-1 rounded-full text-xs font-semibold border";
     switch (rarity) {
       case "COMMON":
         return (
-          <span
-            className={`${baseClass} border-slate-500/70 text-slate-100 bg-slate-900/80`}
-          >
+          <span className={`${baseClass} border-gray-500 text-gray-200`}>
             COMMON
           </span>
         );
       case "RARE":
         return (
-          <span
-            className={`${baseClass} border-rare text-rare bg-sky-900/60`}
-          >
+          <span className={`${baseClass} border-rare text-rare`}>
             RARE
           </span>
         );
       case "EPIC":
         return (
-          <span
-            className={`${baseClass} border-epic text-epic bg-purple-900/60`}
-          >
+          <span className={`${baseClass} border-epic text-epic`}>
             EPIC
           </span>
         );
       case "LEGENDARY":
         return (
-          <span
-            className={`${baseClass} border-legendary text-legendary bg-amber-900/60`}
-          >
+          <span className={`${baseClass} border-legendary text-legendary`}>
             LEGENDARY
           </span>
         );
     }
   }
 
-  const accountRank = getAccountRank(user);
-  const tier = getTier(user?.totalPoints);
+  const displayName =
+    user?.username ||
+    (fid ? `fid:${fid}` : "Guest");
+
+  const league = getLeagueFromPoints(user?.totalPoints ?? 0);
+  const rankLabel = user?.isOg
+    ? user?.isPro
+      ? "BOX PRO OG"
+      : "BOX OG"
+    : user?.isPro
+    ? "BOX PRO"
+    : "BOX Based";
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white flex items-center justify-center">
-        <div className="relative text-center space-y-3">
-          <div className="absolute inset-0 blur-2xl bg-baseBlue/40 opacity-40 -z-10" />
-          <div className="animate-spin h-9 w-9 border-[3px] border-baseBlue border-t-transparent rounded-full mx-auto" />
-          <p className="text-xs tracking-wide text-slate-300 uppercase">
-            Booting BBOX…
-          </p>
+      <main className="min-h-screen bg-[#02010A] text-white flex items-center justify-center">
+        <div className="text-center space-y-2">
+          <div className="animate-spin h-8 w-8 border-2 border-[#00C2FF] border-t-transparent rounded-full mx-auto" />
+          <p className="text-sm text-gray-400">Loading BBOX…</p>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#02040b] text-white">
-      {/* finom háttér zaj + glow */}
-      <div className="pointer-events-none fixed inset-0 opacity-[0.18] mix-blend-screen bg-[radial-gradient(circle_at_0%_0%,#2563eb55_0,transparent_45%),radial-gradient(circle_at_100%_0%,#7c3aed55_0,transparent_40%),radial-gradient(circle_at_50%_100%,#22c55e40_0,transparent_45%)]" />
-      <div className="pointer-events-none fixed inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-soft-light" />
-
-      <div className="relative max-w-md mx-auto px-4 pb-6 pt-4">
+    <main className="min-h-screen bg-gradient-to-b from-[#02010A] via-[#050315] to-black text-white">
+      <div className="max-w-md mx-auto px-4 pb-6 pt-4">
         {/* HEADER */}
         <header className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <img
-                src="/icon.png"
-                alt="BBOX logo"
-                className="w-9 h-9 rounded-xl border border-baseBlue/50 shadow-[0_0_22px_rgba(37,99,235,0.6)] bg-black/60"
-              />
-              <div className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]" />
-            </div>
-            <div className="leading-tight">
-              <h1 className="text-[22px] font-semibold tracking-tight">
-                BBOX
+          <div className="flex items-center gap-2">
+            <img
+              src="/icon.png"
+              alt="BBOX logo"
+              className="w-9 h-9 rounded-xl border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] bg-black/60"
+            />
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+                <span>BBOX</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 border border-emerald-400/60 text-emerald-200">
+                  Daily Box
+                </span>
               </h1>
-              <p className="text-[11px] text-slate-300">
-                Daily Based Box game
+              <p className="text-[11px] text-gray-400 flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
+                <span>Daily Based Box game</span>
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {user?.pfpUrl && (
-              <div className="relative">
-                <img
-                  src={user.pfpUrl}
-                  alt={user.username ?? "Player"}
-                  className="w-9 h-9 rounded-full border border-baseBlue/40 shadow-[0_0_18px_rgba(37,99,235,0.5)] object-cover"
-                />
-                <div className="absolute -bottom-1 right-0 px-1.5 py-[1px] rounded-full bg-black/80 border border-slate-600/60 text-[9px] text-slate-200">
-                  FID {fid ?? "–"}
-                </div>
+            {user?.pfpUrl ? (
+              <img
+                src={user.pfpUrl}
+                alt={displayName}
+                className="w-9 h-9 rounded-full border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] object-cover"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-full border border-[#00C2FF]/40 bg-gradient-to-br from-[#16162A] to-[#050315] flex items-center justify-center shadow-[0_0_18px_rgba(0,194,255,0.4)] text-sm font-semibold">
+                {displayName.charAt(0).toUpperCase()}
               </div>
             )}
             <div className="text-right">
-              <div className="text-xs font-medium max-w-[140px] truncate">
-                {user?.username ?? "Guest"}
+              <div className="text-sm font-medium truncate max-w-[120px]">
+                {displayName}
               </div>
-              <div className="text-[10px] text-slate-400">
-                {accountRank}
+              <div className="text-[11px] text-[#F4F0FF]/80">
+                {rankLabel}
               </div>
             </div>
           </div>
         </header>
 
-        {/* STATS + RANK CARD */}
-        <section className="relative bg-gradient-to-br from-slate-950 via-slate-950/90 to-slate-950/70 border border-slate-800/80 rounded-3xl px-4 py-4 mb-4 shadow-[0_0_32px_rgba(15,23,42,0.9)] overflow-hidden">
-          <div className="absolute -top-16 -right-10 w-40 h-40 bg-[radial-gradient(circle,#1d4ed8_0,transparent_60%)] opacity-40" />
-          <div className="absolute -bottom-20 left-0 w-40 h-40 bg-[radial-gradient(circle,#22c55e_0,transparent_60%)] opacity-25" />
+        {/* STATS CARD */}
+        <section className="relative bg-gradient-to-br from-[#070B2A] via-[#050315] to-black border border-[#1C2348] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_40px_rgba(0,0,0,0.7)] overflow-hidden">
+          <div className="absolute -left-24 -bottom-24 w-52 h-52 rounded-full bg-[#00C2FF]/10 blur-3xl pointer-events-none" />
+          <div className="absolute -right-20 -top-24 w-52 h-52 rounded-full bg-[#7C3AED]/15 blur-3xl pointer-events-none" />
 
-          <div className="relative flex items-start justify-between gap-4">
-            <div className="flex-1 space-y-1.5">
-              <div className="flex justify-between text-[11px] text-slate-300">
-                <span className="uppercase tracking-[0.14em] text-[10px] text-slate-400">
-                  Total points
+          <div className="flex items-start justify-between gap-3 relative z-10">
+            <div className="flex-1">
+              <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
+                <span className="tracking-[0.18em]">
+                  TOTAL POINTS
                 </span>
-                <span className="font-semibold text-[13px] text-sky-100">
+                <span className="font-semibold text-[13px] text-[#E6EBFF]">
                   {user?.totalPoints ?? 0}
                 </span>
               </div>
-              <div className="flex justify-between text-[11px] text-slate-300">
+              <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks</span>
                 <span className="font-medium text-emerald-300">
                   {user?.extraPicksRemaining ?? 0}
                 </span>
               </div>
-              <div className="flex justify-between text-[11px] text-slate-300">
+              <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
                 <span>Free picks</span>
-                <span className="font-medium text-amber-200">
+                <span className="font-medium text-sky-300">
                   {user?.freePicksRemaining ?? 0}
                 </span>
               </div>
-              <div className="mt-2 text-[11px]">
-                <span className="text-slate-400">Next free box: </span>
-                <span className="font-medium text-cyan-300">
+              <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
+                <span>Next free box:</span>
+                <span className="font-semibold text-emerald-300">
                   {countdown || "Ready"}
                 </span>
               </div>
             </div>
 
-            <div className="flex flex-col items-end gap-2">
-              {/* TIER BADGE */}
-              <div
-                className={`px-3 py-2 rounded-xl text-[10px] flex flex-col items-end justify-center shadow-[0_0_24px_rgba(15,23,42,0.9)] ${tier.badgeClass}`}
-              >
-                <span className="uppercase tracking-[0.16em] text-[9px] text-slate-200/80">
-                  {accountRank}
-                </span>
-                <span className={`mt-[2px] font-semibold ${tier.colorClass}`}>
-                  {tier.name}
-                </span>
+            <div className="flex flex-col gap-2">
+              {/* Tier card */}
+              <div className="px-3 py-2 rounded-2xl bg-gradient-to-br from-[#14162F] via-[#191B3D] to-[#050315] border border-[#2B3170] shadow-[0_0_20px_rgba(124,58,237,0.3)] min-w-[120px]">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">
+                  {rankLabel}
+                </div>
+                <div className="text-xs font-semibold text-[#F4F0FF]">
+                  {league}
+                </div>
               </div>
 
-              {/* BUY EXTRA BUTTON */}
+              {/* Buy extra button */}
               <button
                 onClick={() => setShowBuyModal(true)}
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-baseBlue hover:bg-baseBlue/90 text-[11px] font-semibold shadow-[0_0_26px_rgba(37,99,235,0.85)] transition-transform active:scale-95"
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-2xl bg-gradient-to-r from-[#2563EB] via-[#00C2FF] to-[#22C55E] text-xs font-semibold shadow-[0_0_24px_rgba(37,99,235,0.8)] hover:brightness-110 transition"
               >
-                <span className="text-[13px]">＋</span>
-                <span>Buy extra</span>
+                <span className="text-[12px]">+ Buy extra</span>
               </button>
             </div>
           </div>
@@ -552,90 +492,83 @@ finally {
 
         {/* INFO / NO PICKS MESSAGE */}
         {!canPick && (
-          <div className="mb-3 text-[11px] text-amber-100 bg-gradient-to-r from-amber-900/60 via-amber-900/40 to-amber-800/40 border border-amber-500/60 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(245,158,11,0.55)]">
-            <div className="font-semibold mb-1 text-[11px]">
+          <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
+            <div className="font-semibold mb-1">
               No boxes left to open
             </div>
-            <p className="leading-snug">
+            <p className="text-[11px]">
               Wait until the timer hits{" "}
-              <span className="font-semibold">Ready</span> or buy extra
-              picks to keep opening today.
+              <span className="font-semibold">Ready</span> or buy
+              extra picks to keep opening today.
             </p>
           </div>
         )}
 
         {/* BOX GRID */}
-        <section className="relative bg-gradient-to-b from-slate-950/90 to-black/80 border border-slate-900 rounded-3xl px-4 py-4 mb-4 overflow-hidden">
-          <div className="absolute inset-x-0 -top-20 h-32 bg-[radial-gradient(circle_at_50%_0,#1d4ed855_0,transparent_60%)] opacity-70" />
-          <div className="relative">
-            <div className="flex items-baseline justify-between mb-1.5">
-              <h2 className="text-sm font-semibold tracking-tight">
-                Pick your box
-              </h2>
-              <span className="text-[10px] text-slate-400">
-                One pick = one opening
-              </span>
-            </div>
+        <section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-medium">Pick your box</h2>
+            <span className="text-[11px] text-gray-400">
+              One pick = one opening
+            </span>
+          </div>
 
-            <div className="grid grid-cols-3 gap-3 mb-4 mt-2">
-              {[0, 1, 2].map((index) => (
-                <button
-                  key={index}
-                  onClick={() => handlePick(index)}
-                  disabled={!canPick || picking}
-                  className={`relative aspect-[4/5] rounded-2xl flex items-center justify-center border shadow-[0_12px_30px_rgba(15,23,42,0.9)] transition-transform duration-200 ease-out
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            {[0, 1, 2].map((index) => (
+              <button
+                key={index}
+                onClick={() => handlePick(index)}
+                disabled={!canPick || picking}
+                className={`relative aspect-square rounded-2xl flex items-center justify-center border text-3xl transition transform active:scale-95 overflow-hidden
                   ${
                     !canPick || picking
-                      ? "border-slate-800 bg-slate-950/70 text-slate-600 cursor-not-allowed"
-                      : "border-slate-700/80 bg-gradient-to-br from-slate-900 via-slate-950 to-black hover:-translate-y-1 hover:border-cyan-400/70 hover:shadow-[0_18px_40px_rgba(8,47,73,0.9)]"
+                      ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] text-zinc-600 cursor-not-allowed"
+                      : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:from-[#111A4D]"
                   }`}
-                >
-                  <div className="relative">
-                    <span className="text-4xl block drop-shadow-[0_6px_10px_rgba(0,0,0,0.8)]">
-                      📦
-                    </span>
-                    <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-10 h-2 bg-cyan-400/30 blur-md" />
-                  </div>
-                </button>
-              ))}
-            </div>
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(0,194,255,0.18),transparent_55%),radial-gradient(circle_at_bottom,_rgba(124,58,237,0.25),transparent_55%)] pointer-events-none" />
+                <span className="relative text-[34px]">
+                  📦
+                </span>
+              </button>
+            ))}
+          </div>
 
-            <button
-              onClick={() =>
-                canPick
-                  ? handlePick(Math.floor(Math.random() * 3))
-                  : setShowBuyModal(true)
-              }
-              disabled={picking}
-              className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition-transform duration-150 shadow-[0_16px_40px_rgba(37,99,235,0.75)]
+          <button
+            onClick={() =>
+              canPick
+                ? handlePick(Math.floor(Math.random() * 3))
+                : setShowBuyModal(true)
+            }
+            disabled={picking}
+            className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
               ${
                 picking
-                  ? "bg-slate-800 text-slate-500 cursor-not-allowed shadow-none"
+                  ? "bg-zinc-800 text-zinc-500 cursor-not-allowed shadow-none"
                   : canPick
-                  ? "bg-baseBlue hover:bg-baseBlue/90 active:translate-y-[1px]"
-                  : "bg-emerald-500 hover:bg-emerald-400 active:translate-y-[1px]"
+                  ? "bg-gradient-to-r from-[#38BDF8] via-[#00C2FF] to-[#22C55E] text-black"
+                  : "bg-gradient-to-r from-emerald-500 to-[#00C2FF] text-black"
               }`}
-            >
-              {picking
-                ? "Opening…"
-                : canPick
-                ? "Random open"
-                : "Buy extra"}
-            </button>
-          </div>
+          >
+            {picking
+              ? "Opening..."
+              : canPick
+              ? "Random open"
+              : "Buy extra"}
+          </button>
         </section>
 
         {/* NAV BUTTONS */}
         <section className="flex gap-2">
           <Link
             href="/leaderboard"
-            className="flex-1 text-center text-xs py-2.5 rounded-2xl border border-slate-800 bg-slate-950/80 hover:bg-slate-900 transition shadow-[0_10px_24px_rgba(15,23,42,0.9)]"
+            className="flex-1 text-center text-xs py-2 rounded-2xl border border-[#151836] bg-gradient-to-r from-[#050315] to-[#05081F] hover:from-[#070921] hover:to-[#0B102F] transition shadow-[0_0_18px_rgba(0,0,0,0.6)]"
           >
             Leaderboard
           </Link>
           <Link
             href="/faq"
-            className="flex-1 text-center text-xs py-2.5 rounded-2xl border border-slate-800 bg-slate-950/80 hover:bg-slate-900 transition shadow-[0_10px_24px_rgba(15,23,42,0.9)]"
+            className="flex-1 text-center text-xs py-2 rounded-2xl border border-[#151836] bg-gradient-to-r from-[#050315] to-[#05081F] hover:from-[#070921] hover:to-[#0B102F] transition shadow-[0_0_18px_rgba(0,0,0,0.6)]"
           >
             FAQ
           </Link>
@@ -644,11 +577,11 @@ finally {
 
       {/* RESULT MODAL */}
       {showResultModal && lastResult && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="w-full max-w-xs bg-slate-950 border border-slate-800 rounded-3xl px-4 py-4 relative shadow-[0_24px_60px_rgba(0,0,0,0.9)]">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
             <button
               onClick={() => setShowResultModal(false)}
-              className="absolute right-3 top-3 text-slate-500 hover:text-slate-300 text-sm"
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
             >
               ✕
             </button>
@@ -659,21 +592,21 @@ finally {
               <h3 className="text-sm font-semibold mb-2">
                 You opened a {renderRarityLabel(lastResult.rarity)}!
               </h3>
-              <p className="text-lg font-bold text-cyan-300 mb-1">
+              <p className="text-lg font-bold text-[#00C2FF] mb-1">
                 Reward: +{lastResult.points} points
               </p>
-              <p className="text-[11px] text-slate-400 mb-4">
+              <p className="text-xs text-gray-400 mb-4">
                 Keep opening boxes to climb the leaderboard.
               </p>
               <button
                 onClick={handleShareResult}
-                className="w-full py-2 rounded-2xl bg-baseBlue hover:bg-baseBlue/90 text-xs font-semibold mb-2 shadow-[0_14px_32px_rgba(37,99,235,0.8)]"
+                className="w-full py-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#00C2FF] hover:brightness-110 text-xs font-semibold mb-2"
               >
                 Share on Farcaster
               </button>
               <button
                 onClick={() => setShowResultModal(false)}
-                className="w-full py-2 rounded-2xl border border-slate-700 text-xs text-slate-200 hover:bg-slate-900"
+                className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
               >
                 Close
               </button>
@@ -684,14 +617,14 @@ finally {
 
       {/* BUY MODAL */}
       {showBuyModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="w-full max-w-xs bg-slate-950 border border-slate-800 rounded-3xl px-4 py-4 relative shadow-[0_24px_60px_rgba(0,0,0,0.9)]">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
             <button
               onClick={() => {
                 setShowBuyModal(false);
                 setBuyError(null);
               }}
-              className="absolute right-3 top-3 text-slate-500 hover:text-slate-300 text-sm"
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
             >
               ✕
             </button>
@@ -700,9 +633,8 @@ finally {
               <h3 className="text-sm font-semibold mb-1">
                 Buy extra picks
               </h3>
-              <p className="text-[11px] text-slate-400">
-                Pay with Base USDC via Neynar Pay. Picks don&apos;t expire
-                and can be used on any day.
+              <p className="text-[11px] text-gray-400">
+                Picks don&apos;t expire and can be used on any day.
               </p>
             </div>
 
@@ -710,36 +642,36 @@ finally {
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(1)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-2xl border border-slate-700 bg-slate-950 hover:bg-slate-900 text-xs"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-slate-200">
+                <span className="text-gray-300">
                   {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}
                 </span>
               </button>
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(5)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-2xl border border-slate-700 bg-slate-950 hover:bg-slate-900 text-xs"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-slate-200">
+                <span className="text-gray-300">
                   {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}
                 </span>
               </button>
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(10)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-2xl border border-slate-700 bg-slate-950 hover:bg-slate-900 text-xs"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-slate-200">
+                <span className="text-gray-300">
                   {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}
                 </span>
               </button>
             </div>
 
-            <div className="border-t border-slate-800 pt-3 mt-2">
+            <div className="border-t border-zinc-800 pt-3 mt-2">
               <button
                 disabled={buyLoading}
                 onClick={() => {
@@ -760,8 +692,8 @@ finally {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-slate-400 text-center">
-                Opening Neynar Pay…
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Opening payment flow…
               </p>
             )}
           </div>
@@ -770,23 +702,23 @@ finally {
 
       {/* OG MODAL */}
       {showOgModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="w-full max-w-xs bg-slate-950 border border-slate-800 rounded-3xl px-4 py-4 relative shadow-[0_24px_60px_rgba(0,0,0,0.9)]">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
             <button
               onClick={() => {
                 setShowOgModal(false);
                 setBuyError(null);
               }}
-              className="absolute right-3 top-3 text-slate-500 hover:text-slate-300 text-sm"
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
             >
               ✕
             </button>
 
-            <div className="mt-1 mb-3 text-center">
-              <h3 className="text-sm font-semibold mb-1">
+            <div className="mt-1 mb-3">
+              <h3 className="text-sm font-semibold mb-1 text-center">
                 Become OG
               </h3>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-gray-400 text-center">
                 One-time purchase, FID-bound. OGs get a permanent daily
                 buff and a unique badge in BBOX.
               </p>
@@ -795,15 +727,15 @@ finally {
             <button
               disabled={buyLoading}
               onClick={handleBuyOg}
-              className="w-full py-2 rounded-2xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2 shadow-[0_16px_38px_rgba(126,34,206,0.8)]"
+              className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2"
             >
-              Become OG (
-              {process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
+              Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"}{" "}
+              USDC)
             </button>
 
             <button
               onClick={() => setShowOgModal(false)}
-              className="w-full py-2 rounded-2xl border border-slate-700 text-xs text-slate-200 hover:bg-slate-900"
+              className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
             >
               Maybe later
             </button>
@@ -815,8 +747,8 @@ finally {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-slate-400 text-center">
-                Opening Neynar Pay…
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Opening payment flow…
               </p>
             )}
           </div>
