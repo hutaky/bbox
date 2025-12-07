@@ -8,6 +8,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
     const fid = body?.fid as number | undefined;
+    const incomingUsername = (body?.username ?? null) as string | null;
+    const incomingPfpUrl = (body?.pfpUrl ?? null) as string | null;
 
     if (!fid || typeof fid !== "number" || !Number.isFinite(fid)) {
       return NextResponse.json(
@@ -18,7 +20,7 @@ export async function POST(req: Request) {
 
     const supabase = createClient();
 
-    // --- USERS: ellenőrizzük, hogy létezik-e user sor ---
+    // ---- USERS TÁBLA ----
     let userRow:
       | {
           username: string | null;
@@ -45,14 +47,14 @@ export async function POST(req: Request) {
 
       userRow = data;
 
-      // Ha nincs user sor, létrehozunk egy alapértelmezettet
+      // Ha nincs sor -> insert az érkező profiladatokkal
       if (!userRow) {
         const { data: inserted, error: insertErr } = await supabase
           .from("users")
           .insert({
             fid,
-            username: null,
-            pfp_url: null,
+            username: incomingUsername,
+            pfp_url: incomingPfpUrl,
             is_og: false,
             is_pro: false,
           })
@@ -68,10 +70,34 @@ export async function POST(req: Request) {
         }
 
         userRow = inserted;
+      } else {
+        // Ha már van sor, de a Farcasterből új adat jön, frissítjük
+        const shouldUpdate =
+          (incomingUsername &&
+            incomingUsername !== userRow.username) ||
+          (incomingPfpUrl && incomingPfpUrl !== userRow.pfp_url);
+
+        if (shouldUpdate) {
+          const { data: updated, error: updateErr } = await supabase
+            .from("users")
+            .update({
+              username: incomingUsername ?? userRow.username,
+              pfp_url: incomingPfpUrl ?? userRow.pfp_url,
+            })
+            .eq("fid", fid)
+            .select("username, pfp_url, is_og, is_pro")
+            .maybeSingle();
+
+          if (updateErr) {
+            console.error("users update error in /api/me:", updateErr);
+          } else if (updated) {
+            userRow = updated;
+          }
+        }
       }
     }
 
-    // --- USER_STATS: ellenőrizzük / inicializáljuk ---
+    // ---- USER_STATS TÁBLA ----
     let stats:
       | {
           total_points: number | null;
@@ -104,14 +130,13 @@ export async function POST(req: Request) {
 
       stats = data;
 
-      // Ha még nincs stats sor, inicializáljuk
       if (!stats) {
         const { data: inserted, error: insertErr } = await supabase
           .from("user_stats")
           .insert({
             fid,
             total_points: 0,
-            free_picks_remaining: 1, // új user kap 1 free picket
+            free_picks_remaining: 1,
             extra_picks_balance: 0,
             last_free_pick_at: null,
             common_opens: 0,
@@ -136,7 +161,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- nextFreePickAt számítása ---
+    // ---- nextFreePickAt számítása ----
     let nextFreePickAt: string | null = null;
 
     const freeLeft = stats?.free_picks_remaining ?? 0;
@@ -145,7 +170,6 @@ export async function POST(req: Request) {
       : null;
 
     if (freeLeft > 0) {
-      // Van még ingyen nyitás => Ready
       nextFreePickAt = null;
     } else if (lastFree) {
       const target = lastFree + ONE_DAY_MS;
@@ -154,7 +178,7 @@ export async function POST(req: Request) {
       nextFreePickAt = null;
     }
 
-    // --- Válasz az appnak (ApiUserState formátumban) ---
+    // ---- Válasz (ApiUserState formátum) ----
     return NextResponse.json({
       fid,
       username: userRow?.username ?? null,
@@ -172,7 +196,6 @@ export async function POST(req: Request) {
       epicOpens: stats?.epic_opens ?? 0,
       legendaryOpens: stats?.legendary_opens ?? 0,
 
-      // A lastResult-et most nem kezeljük itt (pick route frissítheti majd)
       lastResult: null,
     });
   } catch (e) {
