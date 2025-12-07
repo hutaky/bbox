@@ -1,3 +1,4 @@
+// src/app/faq/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -18,73 +19,85 @@ export default function FAQPage() {
   const [viewerPfp, setViewerPfp] = useState<string | null>(null);
   const [fid, setFid] = useState<number | null>(null);
 
-  // SAME HEADER LOGIC AS HOMEPAGE & LEADERBOARD
+  // HEADER – ugyanaz a logika, mint a főoldalon
   useEffect(() => {
     async function initHeader() {
       try {
         await sdk.actions.ready();
       } catch (e) {
-        console.warn("sdk.actions.ready() failed on FAQ");
+        console.warn("sdk.actions.ready() failed on FAQ:", e);
       }
 
       try {
         const ctx: any = await sdk.context;
 
-        const ctxFid =
-          ctx?.user?.fid ??
-          ctx?.viewer?.fid ??
-          ctx?.viewerContext?.user?.fid ??
+        const ctxUser =
+          ctx?.user ??
+          ctx?.viewer ??
+          ctx?.viewerContext?.user ??
           null;
+
+        const ctxFid: number | null =
+          ctxUser?.fid ?? ctx?.frameData?.fid ?? null;
 
         const queryFid = getFidFromQuery();
         const finalFid = ctxFid || queryFid || null;
         if (finalFid) setFid(finalFid);
 
         const uname =
-          ctx?.user?.username ??
-          ctx?.viewer?.username ??
-          ctx?.viewerContext?.user?.username ??
+          ctxUser?.username ??
+          ctxUser?.displayName ??
+          ctxUser?.display_name ??
+          ctxUser?.name ??
           null;
 
         const pfp =
-          ctx?.user?.pfpUrl ??
-          ctx?.user?.pfp_url ??
-          ctx?.viewer?.pfpUrl ??
-          ctx?.viewer?.pfp_url ??
-          ctx?.viewerContext?.user?.pfpUrl ??
-          ctx?.viewerContext?.user?.pfp_url ??
+          ctxUser?.pfpUrl ??
+          ctxUser?.pfp_url ??
+          ctxUser?.pfp?.url ??
           null;
 
         setViewerName(uname || "BBOX player");
 
         if (pfp && typeof pfp === "string") setViewerPfp(pfp);
-      } catch (_) {
-        setViewerName("BBOX player");
+      } catch (e) {
+        console.warn("sdk.context read failed on FAQ:", e);
+        setViewerName((prev) => prev || "BBOX player");
+
         const q = getFidFromQuery();
         if (q) setFid(q);
       }
     }
-    if (typeof window !== "undefined") initHeader();
+
+    if (typeof window !== "undefined") {
+      void initHeader();
+    }
   }, []);
 
   const displayName = viewerName || "BBOX player";
   const avatarInitial = displayName.charAt(0).toUpperCase();
 
   return (
-    <main className="min-h-screen bg-black text-white p-4 flex flex-col items-center">
-      <div className="w-full max-w-md space-y-4">
-        {/* HEADER – identical to main / leaderboard */}
-        <header className="flex items-center justify-between mb-2">
+    <main className="min-h-screen bg-gradient-to-b from-[#02010A] via-[#050315] to-black text-white">
+      <div className="max-w-md mx-auto px-4 pb-6 pt-4">
+        {/* HEADER – egyezzen a főoldallal */}
+        <header className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <img
               src="/icon.png"
               alt="BBOX logo"
-              className="w-8 h-8 rounded-lg border border-baseBlue/40"
+              className="w-9 h-9 rounded-xl border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] bg-black/60"
             />
             <div>
-              <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
-              <p className="text-[11px] text-gray-400">
-                Daily Based Box game
+              <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+                <span>BBOX</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 border border-emerald-400/60 text-emerald-200">
+                  Season 0
+                </span>
+              </h1>
+              <p className="text-[11px] text-gray-400 flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
+                <span>Daily Based Box game</span>
               </p>
             </div>
           </div>
@@ -94,24 +107,28 @@ export default function FAQPage() {
               <img
                 src={viewerPfp}
                 alt={displayName}
-                className="w-9 h-9 rounded-full border border-baseBlue/40 object-cover"
+                className="w-9 h-9 rounded-full border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] object-cover"
               />
             ) : (
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 border border-baseBlue/40 flex items-center justify-center text-sm font-semibold">
+              <div className="w-9 h-9 rounded-full border border-[#00C2FF]/40 bg-gradient-to-br from-[#16162A] to-[#050315] flex items-center justify-center shadow-[0_0_18px_rgba(0,194,255,0.4)] text-sm font-semibold">
                 {avatarInitial}
               </div>
             )}
             <div className="text-right">
-              <div className="text-sm font-medium truncate">{displayName}</div>
+              <div className="text-sm font-medium truncate max-w-[120px]">
+                {displayName}
+              </div>
               {fid && (
-                <div className="text-[11px] text-gray-500">FID #{fid}</div>
+                <div className="text-[11px] text-[#F4F0FF]/80">
+                  FID #{fid}
+                </div>
               )}
             </div>
           </div>
         </header>
 
         {/* TOP BAR */}
-        <div className="flex items-center justify-between mt-2">
+        <div className="flex items-center justify-between mt-1 mb-3">
           <Link
             href="/"
             className="text-xs text-gray-300 hover:text-white inline-flex items-center gap-1"
@@ -119,65 +136,149 @@ export default function FAQPage() {
             <span>←</span>
             <span>Back</span>
           </Link>
-          <span className="text-sm font-semibold text-gray-200">FAQ</span>
+          <span className="text-sm font-semibold text-gray-200">
+            FAQ
+          </span>
         </div>
 
         {/* FAQ CONTENT */}
-        <section className="mt-2 space-y-4 text-sm text-gray-300">
-          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-base font-semibold text-white">What is BBOX?</h3>
-            <p>
-              BBOX is a daily box-opening mini-game on Farcaster.  
-              Every day you get a free box — plus you can collect extra picks  
-              to open even more.
-            </p>
-          </div>
-
-          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-base font-semibold text-white">How do I play?</h3>
-            <p>
-              Pick a box, open it, earn points.  
-              Common → Legendary: the rarer the box, the bigger the reward.
-            </p>
-          </div>
-
-          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-base font-semibold text-white">
-              Why should I collect more points?
+        <section className="space-y-3 text-sm text-gray-200">
+          {/* 1. What is BBOX? */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              What is BBOX?
             </h3>
-            <p>
-              Each season comes with some… let’s call them <i>special surprises</i>.  
-              Being higher on the leaderboard definitely won’t hurt.  
-              If nothing else — you can flex your rank all season long 😎
+            <p className="text-[13px] text-gray-300">
+              BBOX is a daily box-opening mini-game on Farcaster.  
+              You open boxes, collect points and try to climb as high
+              as possible on the leaderboard each season.
             </p>
           </div>
 
-          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-base font-semibold text-white">
+          {/* 2. How do daily boxes work? */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              How do daily boxes work?
+            </h3>
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              Every day you get at least one free box.  
+              When you open it, you roll a box rarity:
+              <span className="font-medium"> Common → Rare → Epic → Legendary</span>.
+              Rarer boxes give more points.
+            </p>
+            <p className="text-[12px] text-gray-400">
+              When you run out of free boxes, the timer shows when your
+              next free one becomes available.
+            </p>
+          </div>
+
+          {/* 3. Points & leaderboard */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              What are points and leagues?
+            </h3>
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              Each opened box gives points.  
+              Your total points decide your place on the leaderboard
+              and which league you&apos;re in:
+            </p>
+            <ul className="text-[12px] text-gray-300 space-y-0.5 ml-1.5">
+              <li>• 0 – 9 999 pts → Bronze League</li>
+              <li>• 10 000 – 19 999 pts → Silver League</li>
+              <li>• 20 000 – 29 999 pts → Gold League</li>
+              <li>• 30 000+ pts → Platinum League</li>
+            </ul>
+            <p className="text-[12px] text-gray-400 mt-1.5">
+              Higher league = more bragging rights and better position
+              when seasonal rewards are distributed.
+            </p>
+          </div>
+
+          {/* 4. Extra picks */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
               What are extra picks?
             </h3>
-            <p>
-              Extra picks let you open additional boxes on the same day.  
-              They don’t expire and you can stack as many as you want.
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              Extra picks let you open additional boxes on the same day,
+              on top of your free ones.  
+              They don&apos;t expire – if you don&apos;t use them today,
+              you can use them later.
+            </p>
+            <p className="text-[12px] text-gray-400">
+              You can collect extra picks over time or buy more inside
+              the app when payments are enabled.
             </p>
           </div>
 
-          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-base font-semibold text-white">Who are OGs?</h3>
-            <p>
-              OGs get a permanent daily bonus and a badge next to their name.  
-              A small group with big benefits.
-            </p>
-          </div>
-
-          <div className="bg-gray-950/80 border border-gray-800 rounded-2xl p-4 space-y-2">
-            <h3 className="text-base font-semibold text-white">
-              Any tips for climbing the ranks?
+          {/* 5. Ranks & daily openings */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              What are BOX Based, BOX PRO and BOX OG?
             </h3>
-            <p>
-              Open your free box daily, keep your streak alive,  
-              and use extra picks smartly.  
-              Rarer boxes can push you up the leaderboard fast.
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              Ranks define how many free boxes you can open each day:
+            </p>
+            <ul className="text-[12px] text-gray-300 space-y-0.5 ml-1.5">
+              <li>• <span className="font-semibold">BOX Based</span> – default rank, 1 free box / day</li>
+              <li>• <span className="font-semibold">BOX PRO</span> – Farcaster Pro users, 2 free boxes / day</li>
+              <li>• <span className="font-semibold">BOX OG</span> – users who buy the OG upgrade, +2 extra daily boxes</li>
+            </ul>
+            <p className="text-[12px] text-gray-400 mt-1.5">
+              If you&apos;re PRO and also OG, you become{" "}
+              <span className="font-semibold text-emerald-300">
+                BOX PRO OG
+              </span>{" "}
+              and can open 4 boxes per day before using any extra picks.
+            </p>
+          </div>
+
+          {/* 6. Seasonal rewards */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              Why should I care about my rank?
+            </h3>
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              Each season we plan different{" "}
+              <span className="font-semibold">rewards, gifts and on-chain perks</span>{" "}
+              for active players and top leaderboard positions.
+            </p>
+            <p className="text-[12px] text-gray-400">
+              Being higher on the board never hurts – sometimes it means
+              better chances for special rewards, sometimes it&apos;s just
+              pure flex that you were early and active.
+            </p>
+          </div>
+
+          {/* 7. OG upgrade */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              How do I become OG?
+            </h3>
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              OG is a one-time upgrade tied to your FID.  
+              OG players get a permanent daily opening bonus and a
+              unique badge in BBOX.
+            </p>
+            <p className="text-[12px] text-gray-400">
+              When the OG upgrade is active, you&apos;ll see the option in
+              the app. Until then, just keep opening your boxes and
+              stacking points.
+            </p>
+          </div>
+
+          {/* 8. Social / sharing */}
+          <div className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl p-4 shadow-[0_0_26px_rgba(0,0,0,0.7)]">
+            <h3 className="text-base font-semibold text-white mb-1">
+              Can I share my pulls?
+            </h3>
+            <p className="text-[13px] text-gray-300 mb-1.5">
+              Yes. After each opening you can share the result directly
+              to Farcaster with one tap – including how many points you
+              earned and a link back to the game.
+            </p>
+            <p className="text-[12px] text-gray-400">
+              Crazy Legendary pulls are meant to be flexed. 😉
             </p>
           </div>
         </section>
