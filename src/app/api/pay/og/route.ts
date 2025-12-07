@@ -1,19 +1,13 @@
 // src/app/api/pay/og/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 const OG_PRICE = Number(process.env.BBOX_OG_PRICE || "5.0");
 
-// Itt is NEXT_PUBLIC_SUPABASE_URL-t használunk
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
 export const runtime = "nodejs";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type Body = {
   fid: number;
@@ -21,8 +15,8 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
-    const { fid } = body;
+    const body = (await req.json().catch(() => null)) as Body | null;
+    const fid = body?.fid;
 
     if (!fid) {
       return NextResponse.json(
@@ -101,12 +95,15 @@ export async function POST(req: Request) {
       );
     }
 
+    const supabase = supabaseServer;
+
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
       kind: "og_rank",
       pack_size: null,
       frame_id: frameId,
       status: "pending",
+      created_at: new Date().toISOString(),
     });
 
     if (insertError) {
