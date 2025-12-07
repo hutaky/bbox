@@ -1,3 +1,5 @@
+const BBOX_URL = "https://box-sage.vercel.app"; // IDE a saját deploy URL-ed
+
 // src/app/page.tsx
 "use client";
 
@@ -233,20 +235,28 @@ export default function HomePage() {
   }
 
   // ---- Sharing ----
-  async function handleShareResult() {
-    if (!lastResult || !user) return;
-    const rarityLabel = lastResult.rarity.toLowerCase();
-    const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points!`;
+async function handleShareResult() {
+  if (!lastResult || !user) return;
 
-    try {
-      await sdk.actions.openUrl(
-        `https://warpcast.com/~/compose?text=${encodeURIComponent(text)}`
-      );
-    } catch (e) {
-      console.error("Share failed:", e);
-      alert("Could not open share dialog.");
-    }
+  const rarityLabel = lastResult.rarity.toLowerCase();
+  const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
+
+  // szöveg + direkt link az apphoz
+  const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
+
+  // Farcaster compose URL – az embeds[] param miatt a frame linkként is bekerül
+  const composeUrl = `https://warpcast.com/~/compose?text=${encodeURIComponent(
+    fullText
+  )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
+
+  try {
+    await sdk.actions.openUrl(composeUrl);
+  } catch (e) {
+    console.error("Share failed:", e);
+    alert("Could not open share dialog.");
   }
+}
+
 
   // ---- Neynar Pay: extra picks (egyelőre letiltott backendgel) ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
