@@ -1,10 +1,18 @@
 // src/app/api/pay/confirm/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 
+// Ugyanaz a Supabase config, mint /api/pick-ben
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 export const runtime = "nodejs";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
 type Body = {
   fid: number;
@@ -30,8 +38,6 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
-    const supabase = supabaseServer;
 
     // 1) Payment rekord keresése
     const { data: payment, error: payError } = await supabase
@@ -120,7 +126,6 @@ export async function POST(req: Request) {
       const increment = packSize ?? 0;
 
       if (increment > 0) {
-        // user_stats táblában tároljuk az extra pickeket
         const { data: statsRow, error: statsErr } = await supabase
           .from("user_stats")
           .select("extra_picks_remaining")
@@ -154,7 +159,6 @@ export async function POST(req: Request) {
         }
       }
     } else if (kind === "og_rank") {
-      // OG rang beállítása a users táblában
       const { error: updateErr } = await supabase
         .from("users")
         .update({
