@@ -1,22 +1,17 @@
 // src/app/api/pay/extra/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 
+// Árak USDC-ben (frontend csak displayre használ más env-et)
 const PRICE_1 = Number(process.env.BBOX_EXTRA_PRICE_1 || "0.5");   // 1 pick
-const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 pick
-const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
-
-// FONTOS: a frontendnél is használt URL-t használjuk
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 picks
+const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 picks
 
 export const runtime = "nodejs";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type Body = {
   fid: number;
@@ -25,8 +20,9 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
-    const { fid, packSize } = body;
+    const body = (await req.json().catch(() => null)) as Body | null;
+    const fid = body?.fid;
+    const packSize = body?.packSize;
 
     if (!fid || !packSize) {
       return NextResponse.json(
@@ -65,6 +61,7 @@ export async function POST(req: Request) {
         );
     }
 
+    // Neynar Pay payload
     const payload = {
       transaction: {
         to: {
@@ -129,12 +126,15 @@ export async function POST(req: Request) {
       );
     }
 
+    const supabase = supabaseServer;
+
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
       kind: "extra_picks",
       pack_size: packSize,
       frame_id: frameId,
       status: "pending",
+      created_at: new Date().toISOString(),
     });
 
     if (insertError) {
