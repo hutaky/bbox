@@ -136,7 +136,7 @@ export async function POST(req: Request) {
       isPro,
       totalPoints: stats?.total_points ?? 0,
       freePicksRemaining: stats?.free_picks_remaining ?? 0,
-      extraPicksRemaining: stats?.extra_picks_balance ?? 0,
+      extraPicksRemaining: stats?.extra_picks_remaining ?? 0,
       nextFreePickAt: stats?.next_free_pick_at ?? null,
       commonOpens: stats?.common_opens ?? 0,
       rareOpens: stats?.rare_opens ?? 0,
