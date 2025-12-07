@@ -1,11 +1,11 @@
 // src/app/api/me/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 import type { ApiUserState } from "@/types";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => null) as
+    const body = (await req.json().catch(() => null)) as
       | { fid?: number; username?: string | null; pfpUrl?: string | null }
       | null;
 
@@ -21,9 +21,20 @@ export async function POST(req: Request) {
     const incomingUsername = body?.username ?? null;
     const incomingPfpUrl = body?.pfpUrl ?? null;
 
-    const supabase = supabaseServer();
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    // ---- USERS: upsert username + pfp (de NEM írunk bele pontokat stb.) ----
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error("Supabase env vars missing in /api/me");
+      return NextResponse.json(
+        { error: "Server misconfigured (Supabase)" },
+        { status: 500 }
+      );
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // ---- USERS: upsert username + pfp (de NEM nyúlunk a pontokhoz) ----
     if (incomingUsername || incomingPfpUrl) {
       const { error: upsertUserError } = await supabase
         .from("users")
@@ -48,7 +59,7 @@ export async function POST(req: Request) {
         .maybeSingle();
 
       if (insertUserError && insertUserError.code !== "23505") {
-        // 23505 = unique violation => már létezik, nem baj
+        // 23505 = unique violation → már létezik, ez nem hiba
         console.error("users insert error:", insertUserError);
       }
     }
@@ -79,14 +90,12 @@ export async function POST(req: Request) {
     let finalStats = statsRow;
 
     if (!statsRow) {
-      // Új user: kezdő értékek – IMPORTANT: itt 0-ról indul, de a meglévő pontjaidat
-      // NEM írjuk felül, mert ha már volt sor, ide be se jövünk.
       const { data: insertedStats, error: insertStatsError } = await supabase
         .from("user_stats")
         .insert({
           fid,
           total_points: 0,
-          free_picks_remaining: 1,      // alap napi 1 nyitás
+          free_picks_remaining: 1, // alap napi 1 nyitás
           extra_picks_balance: 0,
           common_opens: 0,
           rare_opens: 0,
@@ -104,7 +113,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // ha itt sincs, akkor valami nagyon félrement, de ne dobjuk el az egész kérést
     const stats = finalStats ?? statsRow ?? null;
 
     // ---- ApiUserState összeállítása ----
@@ -135,7 +143,7 @@ export async function POST(req: Request) {
       rareOpens: stats?.rare_opens ?? 0,
       epicOpens: stats?.epic_opens ?? 0,
       legendaryOpens: stats?.legendary_opens ?? 0,
-      lastResult: null, // ezt a /api/pick tölti be, ha szeretnénk
+      lastResult: null,
     };
 
     return NextResponse.json(response);
