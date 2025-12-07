@@ -62,10 +62,20 @@ export async function POST(req: Request) {
       );
     }
 
-    let { free_picks_remaining, extra_picks_remaining } = stats;
+    let { free_picks_remaining, extra_picks_remaining } = stats as {
+      free_picks_remaining: number | null;
+      extra_picks_remaining: number | null;
+      total_points: number | null;
+      next_free_pick_at: string | null;
+      common_opens: number | null;
+      rare_opens: number | null;
+      epic_opens: number | null;
+      legendary_opens: number | null;
+    };
+
     const now = new Date();
 
-    // ha nincs free pick, de lejárt a régi next_free_pick_at, refill 1 free
+    // ha nincs free pick, de lejárt a next_free_pick_at, refill 1 free
     if (
       (free_picks_remaining ?? 0) <= 0 &&
       stats.next_free_pick_at &&
@@ -107,7 +117,7 @@ export async function POST(req: Request) {
 
     // ha most fogyott el az utolsó free pick → 24h múlva legyen új free
     let next_free_pick_at = stats.next_free_pick_at as string | null;
-    if (usedFree && free_picks_remaining <= 0) {
+    if (usedFree && (free_picks_remaining ?? 0) <= 0) {
       const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
       next_free_pick_at = in24h.toISOString();
     }
