@@ -1,114 +1,82 @@
-import { supabaseServer } from "./supabaseServer";
-import { getDailyFreePicks } from "./gameLogic";
+// src/lib/user.ts
+import { createClient } from "./supabaseServer";
 
-export async function ensureUser(
-  fid: number,
-  username?: string | null,
-  pfpUrl?: string | null
-) {
-  const { data: existing } = await supabaseServer
+/**
+ * Gondoskodik róla, hogy a megadott fid-hez létezzen user + user_stats sor.
+ */
+export async function ensureUser(fid: number): Promise<void> {
+  const supabase = createClient();
+
+  // --- USERS ---
+  const { data: userRows, error: userError } = await supabase
     .from("users")
-    .select("*")
+    .select("fid")
     .eq("fid", fid)
-    .maybeSingle();
+    .limit(1);
 
-  if (!existing) {
-    // új user létrehozása
-    const { data: inserted } = await supabaseServer
-      .from("users")
-      .insert({
-        fid,
-        username,
-        pfp_url: pfpUrl
-      })
-      .select("*")
-      .single();
+  if (userError) {
+    console.error("ensureUser: users select error", userError);
+  }
 
-    // alap user_stats – free_picks egyelőre 0, az első belépéskor kapja meg
-    await supabaseServer.from("user_stats").insert({
+  const user = userRows?.[0] ?? null;
+
+  if (!user) {
+    const { error: insertUserError } = await supabase.from("users").insert({
       fid,
-      total_points: 0,
-      free_picks_remaining: 0,
-      extra_picks_balance: 0,
-      next_free_refill_at: null
+      // username, pfp_url-t később is frissíthetjük, ha akarjuk
     });
 
-    return inserted;
+    if (insertUserError) {
+      console.error("ensureUser: users insert error", insertUserError);
+    }
   }
 
-  return existing;
+  // --- USER_STATS ---
+  const { data: statsRows, error: statsError } = await supabase
+    .from("user_stats")
+    .select("fid")
+    .eq("fid", fid)
+    .limit(1);
+
+  if (statsError) {
+    console.error("ensureUser: user_stats select error", statsError);
+  }
+
+  const stats = statsRows?.[0] ?? null;
+
+  if (!stats) {
+    const { error: insertStatsError } = await supabase
+      .from("user_stats")
+      .insert({
+        fid,
+        total_points: 0,
+        free_picks_remaining: 0,
+        extra_picks_balance: 0,
+        next_free_pick_at: null,
+        common_opens: 0,
+        rare_opens: 0,
+        epic_opens: 0,
+        legendary_opens: 0,
+      });
+
+    if (insertStatsError) {
+      console.error("ensureUser: user_stats insert error", insertStatsError);
+    }
+  }
 }
 
-export async function getUserState(fid: number) {
-  const { data: user } = await supabaseServer
-    .from("users")
-    .select("*")
-    .eq("fid", fid)
-    .single();
-
-  const { data: stats } = await supabaseServer
-    .from("user_stats")
-    .select("*")
-    .eq("fid", fid)
-    .single();
-
-  return { user, stats };
-}
-
-export async function refreshFreePicksIfNeeded(fid: number) {
-  const { data: user } = await supabaseServer
-    .from("users")
-    .select("is_og")
-    .eq("fid", fid)
-    .single();
-
-  const { data: stats } = await supabaseServer
-    .from("user_stats")
-    .select("*")
-    .eq("fid", fid)
-    .single();
-
-  const now = new Date();
-
-  // 1) Ha még soha nem volt refill (next_free_refill_at = null) ÉS nincs free pick,
-  //    akkor ez az első alkalom → adjuk oda a napi free pickeket
-  if (!stats.next_free_refill_at && stats.free_picks_remaining === 0) {
-    const freePicks = getDailyFreePicks(user.is_og);
-    const { data: updated } = await supabaseServer
-      .from("user_stats")
-      .update({
-        free_picks_remaining: freePicks,
-        updated_at: now.toISOString()
-      })
-      .eq("fid", fid)
-      .select("*")
-      .single();
-
-    return { user, stats: updated };
+/**
+ * Napi ingyenes nyitások száma rank alapján.
+ *
+ * BOX Based:    isPro=false, isOg=false -> 1
+ * BOX OG:       isPro=false, isOg=true  -> 1 + 2 = 3
+ * BOX PRO:      isPro=true,  isOg=false -> 2
+ * BOX PRO OG:   isPro=true,  isOg=true  -> 2 + 2 = 4
+ */
+export function getDailyFreePicks(isOg: boolean, isPro: boolean): number {
+  let base = isPro ? 2 : 1; // BASED vs PRO
+  if (isOg) {
+    base += 2; // OG buff
   }
-
-  // 2) Normál refill logika: ha van next_free_refill_at, és már lejárt, és nincs free pick
-  if (
-    stats &&
-    stats.next_free_refill_at &&
-    new Date(stats.next_free_refill_at) <= now &&
-    stats.free_picks_remaining === 0
-  ) {
-    const freePicks = getDailyFreePicks(user.is_og);
-    const { data: updated } = await supabaseServer
-      .from("user_stats")
-      .update({
-        free_picks_remaining: freePicks,
-        next_free_refill_at: null,
-        updated_at: now.toISOString()
-      })
-      .eq("fid", fid)
-      .select("*")
-      .single();
-
-    return { user, stats: updated };
-  }
-
-  // 3) Egyébként marad a jelenlegi állapot
-  return { user, stats };
+  return base;
 }
