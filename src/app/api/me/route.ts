@@ -34,7 +34,7 @@ export async function POST(req: Request) {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // ---- USERS: upsert username + pfp (de NEM nyúlunk a pontokhoz) ----
+    // --- USERS: username + pfp upsert (de pontokhoz nem nyúlunk) ---
     if (incomingUsername || incomingPfpUrl) {
       const { error: upsertUserError } = await supabase
         .from("users")
@@ -51,20 +51,20 @@ export async function POST(req: Request) {
         console.error("users upsert error:", upsertUserError);
       }
     } else {
-      // ha nincs érkező adat, legalább legyen sor
+      // ha nincs érkező adat, legalább legyen egy sor
       const { error: insertUserError } = await supabase
         .from("users")
         .insert({ fid })
         .select()
         .maybeSingle();
 
+      // 23505 = unique violation → már létezik, ezt lenyeljük
       if (insertUserError && insertUserError.code !== "23505") {
-        // 23505 = unique violation → már létezik, ez nem hiba
         console.error("users insert error:", insertUserError);
       }
     }
 
-    // ---- USERS sor kiolvasása ----
+    // --- USERS sor kiolvasása ---
     const { data: userRow, error: userSelectError } = await supabase
       .from("users")
       .select("*")
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
       console.error("users select error:", userSelectError);
     }
 
-    // ---- USER_STATS: ha nincs sor, létrehozzuk, de NEM írjuk felül a meglévőt ----
+    // --- USER_STATS: ha nincs, létrehozzuk ---
     const { data: statsRow, error: statsSelectError } = await supabase
       .from("user_stats")
       .select("*")
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (statsSelectError && statsSelectError.code !== "PGRST116") {
-      // PGRST116 = no rows found
+      // PGRST116 = no rows
       console.error("user_stats select error:", statsSelectError);
     }
 
@@ -115,7 +115,6 @@ export async function POST(req: Request) {
 
     const stats = finalStats ?? statsRow ?? null;
 
-    // ---- ApiUserState összeállítása ----
     const username =
       userRow?.username ??
       incomingUsername ??
@@ -143,7 +142,6 @@ export async function POST(req: Request) {
       rareOpens: stats?.rare_opens ?? 0,
       epicOpens: stats?.epic_opens ?? 0,
       legendaryOpens: stats?.legendary_opens ?? 0,
-      lastResult: null,
     };
 
     return NextResponse.json(response);
