@@ -1,19 +1,28 @@
-import { createClient } from "@supabase/supabase-js";
+// src/lib/supabaseServer.ts
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseServiceRoleKey) {
-  console.warn(
-    "Supabase env vars are missing. Make sure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set."
+if (!SUPABASE_URL) {
+  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL for Supabase client");
+}
+if (!SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error(
+    "Missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY for Supabase client"
   );
 }
 
-// Ez a kész, szerver oldali Supabase kliens
-export const supabaseServer = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: { persistSession: false }
-});
+/**
+ * Szerver oldali Supabase kliens.
+ * API route-okban nyugodtan használhatod – a service role key nem megy ki a kliensre.
+ */
+export function createClient(): SupabaseClient {
+  return createSupabaseClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+}
 
-// Ezt azért exportáljuk, mert máshol így importáltad:
-// import { createClient } from "@/lib/supabaseServer";
-export { createClient };
+// Ha szeretnél, használhatod ezt is máshol:
+export type SupabaseServerClient = ReturnType<typeof createClient>;
