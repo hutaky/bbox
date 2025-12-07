@@ -1,17 +1,25 @@
 // src/app/api/pay/extra/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 
-// Árak USDC-ben (frontend csak displayre használ más env-et)
+// Árak USDC-ben
 const PRICE_1 = Number(process.env.BBOX_EXTRA_PRICE_1 || "0.5");   // 1 pick
 const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 picks
 const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 picks
 
+// Ugyanaz, mint a /api/pick-ben
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 export const runtime = "nodejs";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
 type Body = {
   fid: number;
@@ -61,7 +69,6 @@ export async function POST(req: Request) {
         );
     }
 
-    // Neynar Pay payload
     const payload = {
       transaction: {
         to: {
@@ -125,8 +132,6 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
-    const supabase = supabaseServer;
 
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
