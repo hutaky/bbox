@@ -1,16 +1,10 @@
 // src/app/api/pay/confirm/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 
-// Itt is NEXT_PUBLIC_SUPABASE_URL
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
 export const runtime = "nodejs";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type Body = {
   fid: number;
@@ -19,8 +13,9 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
-    const { fid, frameId } = body;
+    const body = (await req.json().catch(() => null)) as Body | null;
+    const fid = body?.fid;
+    const frameId = body?.frameId;
 
     if (!fid || !frameId) {
       return NextResponse.json(
@@ -36,7 +31,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Payment keresése
+    const supabase = supabaseServer;
+
+    // 1) Payment rekord keresése
     const { data: payment, error: payError } = await supabase
       .from("payments")
       .select("*")
@@ -46,10 +43,7 @@ export async function POST(req: Request) {
 
     if (payError) {
       console.error("Supabase payments fetch error:", payError);
-      return NextResponse.json(
-        { error: "DB error" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "DB error" }, { status: 500 });
     }
 
     if (!payment) {
@@ -63,7 +57,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "already_completed" });
     }
 
-    // 2) Neynar GET státusz
+    // 2) Neynar fizetés státusz lekérdezése
     const res = await fetch(
       `https://api.neynar.com/v2/farcaster/frame/transaction/pay?id=${encodeURIComponent(
         frameId
@@ -96,10 +90,11 @@ export async function POST(req: Request) {
       !status ||
       !["completed", "succeeded", "confirmed"].includes(status)
     ) {
+      // még nem végleges a fizetés
       return NextResponse.json({ status: "pending" });
     }
 
-    // Metadata / payment info
+    // 3) Metadata, hogy mit vett a user
     const md =
       frame.metadata ||
       frame.transaction?.metadata ||
@@ -118,30 +113,35 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3) Jóváírás Supabase-ben
+    const nowIso = new Date().toISOString();
+
+    // 4) Jóváírás Supabase-ben
     if (kind === "extra_picks") {
       const increment = packSize ?? 0;
+
       if (increment > 0) {
+        // user_stats táblában tároljuk az extra pickeket
         const { data: statsRow, error: statsErr } = await supabase
-          .from("stats")
+          .from("user_stats")
           .select("extra_picks_remaining")
           .eq("fid", fid)
           .maybeSingle();
 
         if (statsErr) {
-          console.error("Stats fetch error:", statsErr);
+          console.error("user_stats fetch error:", statsErr);
         } else if (statsRow) {
           const current = statsRow.extra_picks_remaining ?? 0;
+
           const { error: updateErr } = await supabase
-            .from("stats")
+            .from("user_stats")
             .update({
               extra_picks_remaining: current + increment,
-              updated_at: new Date().toISOString(),
+              updated_at: nowIso,
             })
             .eq("fid", fid);
 
           if (updateErr) {
-            console.error("Stats update error:", updateErr);
+            console.error("user_stats update error (extra picks):", updateErr);
           } else {
             console.log(
               `Added ${increment} extra picks to fid ${fid}`
@@ -149,16 +149,17 @@ export async function POST(req: Request) {
           }
         } else {
           console.warn(
-            "No stats row for fid in confirm, consider creating it earlier"
+            "No user_stats row for fid in confirm, consider ensuring creation in /api/me"
           );
         }
       }
     } else if (kind === "og_rank") {
+      // OG rang beállítása a users táblában
       const { error: updateErr } = await supabase
         .from("users")
         .update({
           is_og: true,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
         })
         .eq("fid", fid);
 
@@ -171,12 +172,12 @@ export async function POST(req: Request) {
       console.warn("Unknown payment kind in confirm:", kind);
     }
 
-    // 4) Payment státusz frissítés
+    // 5) Payment státusz frissítés
     const { error: statusErr } = await supabase
       .from("payments")
       .update({
         status: "completed",
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       })
       .eq("id", payment.id);
 
