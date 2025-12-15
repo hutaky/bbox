@@ -6,7 +6,8 @@ import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
 
-const BBOX_URL = "https://box-sage.vercel.app"; // IDE a saját deploy URL-ed
+// ✅ állítsd a SAJÁT deploy URL-edre (ez kerül a share-be + embedbe is)
+const BBOX_URL = "https://box-sage.vercel.app";
 
 type BoxRarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
 
@@ -42,7 +43,6 @@ function getFidFromQuery(): number | null {
   return Number.isFinite(fid) ? fid : null;
 }
 
-// Liga meghatározása pontszám alapján
 function getLeagueFromPoints(points: number): string {
   if (points >= 30000) return "Platinum League";
   if (points >= 20000) return "Gold League";
@@ -54,6 +54,7 @@ export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
   const [loading, setLoading] = useState(true);
+
   const [picking, setPicking] = useState(false);
   const [countdown, setCountdown] = useState<string>("");
 
@@ -80,20 +81,16 @@ export default function HomePage() {
           username: profile?.username ?? null,
           pfpUrl: profile?.pfpUrl ?? null,
         }),
+        cache: "no-store",
       });
 
       const data = await res.json();
       setUser(data);
 
-      if (data?.nextFreePickAt) {
-        setCountdown(formatCountdown(data.nextFreePickAt));
-      } else {
-        setCountdown("Ready");
-      }
+      if (data?.nextFreePickAt) setCountdown(formatCountdown(data.nextFreePickAt));
+      else setCountdown("Ready");
 
-      if (data?.lastResult) {
-        setLastResult(data.lastResult);
-      }
+      if (data?.lastResult) setLastResult(data.lastResult);
     } catch (err) {
       console.error("Failed to load user state:", err);
     }
@@ -114,13 +111,9 @@ export default function HomePage() {
         const context: any = await sdk.context;
 
         const ctxUser =
-          context?.user ??
-          context?.viewer ??
-          context?.viewerContext?.user ??
-          null;
+          context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
 
-        const ctxFid: number | null =
-          ctxUser?.fid ?? context?.frameData?.fid ?? null;
+        const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
           username:
@@ -129,11 +122,7 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl:
-            ctxUser?.pfpUrl ??
-            ctxUser?.pfp_url ??
-            ctxUser?.pfp?.url ??
-            null,
+          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
         };
 
         const queryFid = getFidFromQuery();
@@ -155,11 +144,8 @@ export default function HomePage() {
       }
     }
 
-    if (typeof window !== "undefined") {
-      void init();
-    } else {
-      setLoading(false);
-    }
+    if (typeof window !== "undefined") void init();
+    else setLoading(false);
 
     return () => {
       cancelled = true;
@@ -179,8 +165,7 @@ export default function HomePage() {
   }, [user?.nextFreePickAt]);
 
   const canPick =
-    (user?.freePicksRemaining ?? 0) > 0 ||
-    (user?.extraPicksRemaining ?? 0) > 0;
+    (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
 
   // ---- Box pick ----
   async function handlePick(boxIndex: number) {
@@ -237,9 +222,9 @@ export default function HomePage() {
 
     const rarityLabel = lastResult.rarity.toLowerCase();
     const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
-
     const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
 
+    // ✅ compose + embed (frame linkként is bekerül)
     const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
       fullText
     )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
@@ -252,17 +237,47 @@ export default function HomePage() {
     }
   }
 
-  // ---- Neynar Pay: extra picks ----
+  // ---- Poll confirm helper (webhook nélkül) ----
+  async function pollPaymentUntilCompleted(currentFid: number, frameId: string) {
+    const started = Date.now();
+    const timeoutMs = 90_000; // 90 sec
+    const intervalMs = 2000;
+
+    while (Date.now() - started < timeoutMs) {
+      const res = await fetch("/api/pay/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fid: currentFid, frameId }),
+        cache: "no-store",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (
+        res.ok &&
+        (data.status === "completed" || data.status === "already_completed")
+      ) {
+        return true;
+      }
+
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+
+    return false;
+  }
+
+  // ---- Neynar Pay: extra picks (✅ pay/extra + polling) ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
       return;
     }
+
     try {
       setBuyLoading(true);
       setBuyError(null);
 
-      const res = await fetch("/api/buy/extra", {
+      // ✅ HELYES endpoint
+      const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fid, packSize }),
@@ -270,11 +285,27 @@ export default function HomePage() {
 
       const data = await res.json();
       if (!res.ok) {
-        console.error("Failed to create pay frame:", data);
-        setBuyError(
-          data.error ?? "Purchases are currently disabled. Try again later."
-        );
+        console.error("pay/extra error:", data);
+        setBuyError(data.error ?? "Payment init failed.");
         return;
+      }
+
+      const { frameUrl, frameId } = data as { frameUrl: string; frameId: string };
+      if (!frameUrl || !frameId) {
+        setBuyError("Invalid payment response.");
+        return;
+      }
+
+      // 1) Neynar Pay frame megnyitása
+      await sdk.actions.openUrl(frameUrl);
+
+      // 2) Polling confirm → jóváírás → user state refresh
+      const ok = await pollPaymentUntilCompleted(fid, frameId);
+      if (ok) {
+        await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+        setShowBuyModal(false);
+      } else {
+        setBuyError("Payment not confirmed yet. If you paid, wait a bit and try again.");
       }
     } catch (err) {
       console.error("Error in handleBuyExtra:", err);
@@ -284,17 +315,19 @@ export default function HomePage() {
     }
   }
 
-  // ---- Neynar Pay: OG rank ----
+  // ---- Neynar Pay: OG rank (✅ pay/og + polling) ----
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
       return;
     }
+
     try {
       setBuyLoading(true);
       setBuyError(null);
 
-      const res = await fetch("/api/buy/og", {
+      // ✅ HELYES endpoint
+      const res = await fetch("/api/pay/og", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fid }),
@@ -302,11 +335,25 @@ export default function HomePage() {
 
       const data = await res.json();
       if (!res.ok) {
-        console.error("Failed to create OG pay frame:", data);
-        setBuyError(
-          data.error ?? "OG upgrades are currently disabled. Try again later."
-        );
+        console.error("pay/og error:", data);
+        setBuyError(data.error ?? "Payment init failed.");
         return;
+      }
+
+      const { frameUrl, frameId } = data as { frameUrl: string; frameId: string };
+      if (!frameUrl || !frameId) {
+        setBuyError("Invalid payment response.");
+        return;
+      }
+
+      await sdk.actions.openUrl(frameUrl);
+
+      const ok = await pollPaymentUntilCompleted(fid, frameId);
+      if (ok) {
+        await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+        setShowOgModal(false);
+      } else {
+        setBuyError("Payment not confirmed yet. If you paid, wait a bit and try again.");
       }
     } catch (err) {
       console.error("Error in handleBuyOg:", err);
@@ -333,38 +380,20 @@ export default function HomePage() {
   }
 
   function renderRarityBadge(rarity: BoxRarity) {
-    const baseClass =
-      "px-2 py-1 rounded-full text-xs font-semibold border";
+    const baseClass = "px-2 py-1 rounded-full text-xs font-semibold border";
     switch (rarity) {
       case "COMMON":
-        return (
-          <span className={`${baseClass} border-gray-500 text-gray-200`}>
-            COMMON
-          </span>
-        );
+        return <span className={`${baseClass} border-gray-500 text-gray-200`}>COMMON</span>;
       case "RARE":
-        return (
-          <span className={`${baseClass} border-rare text-rare`}>
-            RARE
-          </span>
-        );
+        return <span className={`${baseClass} border-rare text-rare`}>RARE</span>;
       case "EPIC":
-        return (
-          <span className={`${baseClass} border-epic text-epic`}>
-            EPIC
-          </span>
-        );
+        return <span className={`${baseClass} border-epic text-epic`}>EPIC</span>;
       case "LEGENDARY":
-        return (
-          <span className={`${baseClass} border-legendary text-legendary`}>
-            LEGENDARY
-          </span>
-        );
+        return <span className={`${baseClass} border-legendary text-legendary`}>LEGENDARY</span>;
     }
   }
 
-  const displayName =
-    user?.username || (fid ? `fid:${fid}` : "Guest");
+  const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
 
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
   const rankLabel = user?.isOg
@@ -424,12 +453,8 @@ export default function HomePage() {
               </div>
             )}
             <div className="text-right">
-              <div className="text-sm font-medium truncate max-w-[120px]">
-                {displayName}
-              </div>
-              <div className="text-[11px] text-[#F4F0FF]/80">
-                {rankLabel}
-              </div>
+              <div className="text-sm font-medium truncate max-w-[120px]">{displayName}</div>
+              <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
         </header>
@@ -443,42 +468,33 @@ export default function HomePage() {
             <div className="flex-1">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
-                <span className="font-semibold text-[13px] text-[#E6EBFF]">
-                  {user?.totalPoints ?? 0}
-                </span>
+                <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
               </div>
+
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
-                <span className="font-medium text-emerald-300">
-                  {user?.extraPicksRemaining ?? 0}
-                </span>
+                <span className="font-medium text-emerald-300">{user?.extraPicksRemaining ?? 0}</span>
               </div>
+
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
                 <span>Free picks:</span>
-                <span className="font-medium text-sky-300">
-                  {user?.freePicksRemaining ?? 0}
-                </span>
+                <span className="font-medium text-sky-300">{user?.freePicksRemaining ?? 0}</span>
               </div>
+
               <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
                 <span>Next free box:</span>
-                <span className="font-semibold text-emerald-300">
-                  {countdown || "Ready"}
-                </span>
+                <span className="font-semibold text-emerald-300">{countdown || "Ready"}</span>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
-              {/* Tier card */}
               <div className="px-3 py-2 rounded-2xl bg-gradient-to-br from-[#14162F] via-[#191B3D] to-[#050315] border border-[#2B3170] shadow-[0_0_20px_rgba(124,58,237,0.3)] min-w-[120px]">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">
                   {rankLabel}
                 </div>
-                <div className="text-xs font-semibold text-[#F4F0FF]">
-                  {league}
-                </div>
+                <div className="text-xs font-semibold text-[#F4F0FF]">{league}</div>
               </div>
 
-              {/* Buy extra button */}
               <button
                 onClick={() => setShowBuyModal(true)}
                 className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-2xl bg-gradient-to-r from-[#2563EB] via-[#00C2FF] to-[#22C55E] text-xs font-semibold shadow-[0_0_24px_rgba(37,99,235,0.8)] hover:brightness-110 transition"
@@ -492,13 +508,9 @@ export default function HomePage() {
         {/* INFO / NO PICKS MESSAGE */}
         {!canPick && (
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
-            <div className="font-semibold mb-1">
-              No boxes left to open
-            </div>
+            <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits{" "}
-              <span className="font-semibold">Ready</span> or buy
-              extra picks to keep opening today.
+              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
             </p>
           </div>
         )}
@@ -507,9 +519,7 @@ export default function HomePage() {
         <section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-medium">Pick your box</h2>
-            <span className="text-[11px] text-gray-400">
-              One pick = one opening
-            </span>
+            <span className="text-[11px] text-gray-400">One pick = one opening</span>
           </div>
 
           <div className="grid grid-cols-3 gap-3 mb-4">
@@ -525,15 +535,11 @@ export default function HomePage() {
                       : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
                   }`}
               >
-                {/* Glow layer */}
-                <div className="absolute inset-0 bg-gradient-to-br from-baseBlue/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-
-                {/* Shine sweep */}
+                <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
 
-                {/* Box icon */}
                 <div className="relative z-10 h-full flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-baseBlue/80 to-baseBlue/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/80 to-[#00C2FF]/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
                     <svg
                       viewBox="0 0 24 24"
                       className="w-8 h-8 text-white/90"
@@ -548,7 +554,6 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* Footer label */}
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
                   <span className="text-[11px] text-gray-300 group-hover:text-white transition">
                     Tap to open
@@ -560,9 +565,7 @@ export default function HomePage() {
 
           <button
             onClick={() =>
-              canPick
-                ? handlePick(Math.floor(Math.random() * 3))
-                : setShowBuyModal(true)
+              canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true)
             }
             disabled={picking}
             className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
@@ -574,11 +577,7 @@ export default function HomePage() {
                   : "bg-gradient-to-r from-emerald-500 to-[#00C2FF] text-black"
               }`}
           >
-            {picking
-              ? "Opening..."
-              : canPick
-              ? "Random open"
-              : "Buy extra"}
+            {picking ? "Opening..." : canPick ? "Random open" : "Buy extra"}
           </button>
         </section>
 
@@ -610,9 +609,7 @@ export default function HomePage() {
               ✕
             </button>
             <div className="text-center mt-2">
-              <div className="mb-3 flex justify-center">
-                {renderRarityBadge(lastResult.rarity)}
-              </div>
+              <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
               <h3 className="text-sm font-semibold mb-2">
                 You opened a {renderRarityLabel(lastResult.rarity)}!
               </h3>
@@ -654,9 +651,7 @@ export default function HomePage() {
             </button>
 
             <div className="text-center mt-1 mb-3">
-              <h3 className="text-sm font-semibold mb-1">
-                Buy extra picks
-              </h3>
+              <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
               <p className="text-[11px] text-gray-400">
                 Picks don&apos;t expire and can be used on any day.
               </p>
@@ -666,32 +661,28 @@ export default function HomePage() {
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(1)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs disabled:opacity-60"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">
-                  {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}
-                </span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}</span>
               </button>
+
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(5)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs disabled:opacity-60"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">
-                  {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}
-                </span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}</span>
               </button>
+
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(10)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs disabled:opacity-60"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">
-                  {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}
-                </span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}</span>
               </button>
             </div>
 
@@ -703,21 +694,19 @@ export default function HomePage() {
                   setShowOgModal(true);
                   setBuyError(null);
                 }}
-                className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
+                className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted disabled:opacity-60"
               >
                 Become an OG box opener
               </button>
             </div>
 
             {buyError && (
-              <p className="mt-3 text-[11px] text-red-400 text-center">
-                {buyError}
-              </p>
+              <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>
             )}
 
             {buyLoading && (
               <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Opening payment flow…
+                Opening payment flow… (waiting for confirmation)
               </p>
             )}
           </div>
@@ -739,22 +728,18 @@ export default function HomePage() {
             </button>
 
             <div className="mt-1 mb-3">
-              <h3 className="text-sm font-semibold mb-1 text-center">
-                Become OG
-              </h3>
+              <h3 className="text-sm font-semibold mb-1 text-center">Become OG</h3>
               <p className="text-[11px] text-gray-400 text-center">
-                One-time purchase, FID-bound. OGs get a permanent daily
-                buff and a unique badge in BBOX.
+                One-time purchase, FID-bound. OGs get a permanent daily buff and a unique badge in BBOX.
               </p>
             </div>
 
             <button
               disabled={buyLoading}
               onClick={handleBuyOg}
-              className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2"
+              className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2 disabled:opacity-60"
             >
-              Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"}{" "}
-              USDC)
+              Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
             </button>
 
             <button
@@ -765,14 +750,12 @@ export default function HomePage() {
             </button>
 
             {buyError && (
-              <p className="mt-3 text-[11px] text-red-400 text-center">
-                {buyError}
-              </p>
+              <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>
             )}
 
             {buyLoading && (
               <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Opening payment flow…
+                Opening payment flow… (waiting for confirmation)
               </p>
             )}
           </div>
