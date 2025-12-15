@@ -4,10 +4,9 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-// ugyanaz az URL, mint a frontendnél
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -18,10 +17,16 @@ type Body = {
   frameId: string;
 };
 
+function isSuccessStatus(status?: string | null) {
+  const s = (status || "").toLowerCase();
+  return ["completed", "succeeded", "confirmed"].includes(s);
+}
+
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
-    const { fid, frameId } = body;
+    const body = (await req.json().catch(() => null)) as Body | null;
+    const fid = body?.fid;
+    const frameId = body?.frameId;
 
     if (!fid || !frameId) {
       return NextResponse.json(
@@ -29,49 +34,42 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-
     if (!NEYNAR_API_KEY) {
-      return NextResponse.json(
-        { error: "NEYNAR_API_KEY not set" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "NEYNAR_API_KEY not set" }, { status: 500 });
     }
 
-    // 1) Payment rekord keresése
-    const { data: payment, error: payError } = await supabase
+    // 1) Payment rekord (Supabase) – opcionális, de hasznos
+    const { data: payment, error: payErr } = await supabase
       .from("payments")
       .select("*")
       .eq("frame_id", frameId)
       .eq("fid", fid)
       .maybeSingle();
 
-    if (payError) {
-      console.error("Supabase payments fetch error:", payError);
+    if (payErr) {
+      console.error("payments select error:", payErr);
       return NextResponse.json({ error: "DB error" }, { status: 500 });
     }
-
     if (!payment) {
       return NextResponse.json(
         { error: "Payment not found for this frameId/fid" },
         { status: 404 }
       );
     }
-
     if (payment.status === "completed") {
       return NextResponse.json({ status: "already_completed" });
     }
 
-    // 2) Neynar GET – tranzakció státusz lekérése
+    // 2) Neynar pay státusz
     const res = await fetch(
-      `https://api.neynar.com/v2/farcaster/frame/transaction/pay?id=${encodeURIComponent(
-        frameId
-      )}`,
+      `https://api.neynar.com/v2/farcaster/frame/transaction/pay?id=${encodeURIComponent(frameId)}`,
       {
         method: "GET",
         headers: {
           accept: "application/json",
           "x-api-key": NEYNAR_API_KEY,
         },
+        cache: "no-store",
       }
     );
 
@@ -85,107 +83,90 @@ export async function POST(req: Request) {
     }
 
     const data = await res.json();
-    console.log("Neynar pay status payload:", JSON.stringify(data));
+    const frame = data?.transaction_frame ?? data;
+    const status = frame?.status as string | undefined;
 
-    const frame = data.transaction_frame ?? data;
-    const status = (frame.status as string | undefined)?.toLowerCase();
-
-    // ha még nincs kész → pending
-    if (
-      !status ||
-      !["completed", "succeeded", "confirmed"].includes(status)
-    ) {
+    if (!isSuccessStatus(status)) {
       return NextResponse.json({ status: "pending" });
     }
 
-    // 3) Metadata + pay típus
+    // 3) Metadata: mit vett?
     const md =
-      frame.metadata ||
-      frame.transaction?.metadata ||
-      data.metadata ||
+      frame?.metadata ||
+      frame?.transaction?.metadata ||
+      data?.metadata ||
       {};
 
     const kind: string | undefined = md.kind ?? payment.kind;
     const packSize: number | undefined = md.pack_size ?? payment.pack_size;
-    const fidMeta: number | undefined = md.fid;
 
-    if (fidMeta && fidMeta !== fid) {
-      console.warn("FID mismatch between metadata and request:", {
-        fidMeta,
-        fid,
-      });
-    }
+    // 4) Jóváírás DB-ben
+    const nowIso = new Date().toISOString();
 
-    // 4) Jóváírás Supabase-ben
     if (kind === "extra_picks") {
-      const increment = packSize ?? 0;
-      if (increment > 0) {
-        const { data: statsRow, error: statsErr } = await supabase
+      const inc = Number(packSize || 0);
+
+      if (inc > 0) {
+        // user_stats extra_picks_remaining += inc
+        const { data: stats, error: statsErr } = await supabase
           .from("user_stats")
           .select("extra_picks_remaining")
           .eq("fid", fid)
           .maybeSingle();
 
         if (statsErr) {
-          console.error("user_stats fetch error:", statsErr);
-        } else if (statsRow) {
-          const current = statsRow.extra_picks_remaining ?? 0;
-          const { error: updateErr } = await supabase
-            .from("user_stats")
-            .update({
-              extra_picks_remaining: current + increment,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("fid", fid);
-
-          if (updateErr) {
-            console.error("user_stats update error:", updateErr);
-          } else {
-            console.log(`Added ${increment} extra picks to fid ${fid}`);
-          }
-        } else {
-          console.warn(
-            "No user_stats row for fid in confirm, consider creating it earlier"
+          console.error("user_stats select error:", statsErr);
+          return NextResponse.json({ error: "DB error" }, { status: 500 });
+        }
+        if (!stats) {
+          return NextResponse.json(
+            { error: "No user_stats row for this fid" },
+            { status: 404 }
           );
+        }
+
+        const current = Number(stats.extra_picks_remaining || 0);
+        const { error: updErr } = await supabase
+          .from("user_stats")
+          .update({
+            extra_picks_remaining: current + inc,
+            updated_at: nowIso,
+          })
+          .eq("fid", fid);
+
+        if (updErr) {
+          console.error("user_stats update error:", updErr);
+          return NextResponse.json({ error: "Failed to credit picks" }, { status: 500 });
         }
       }
     } else if (kind === "og_rank") {
-      const { error: updateErr } = await supabase
+      const { error: updErr } = await supabase
         .from("users")
-        .update({
-          is_og: true,
-          updated_at: new Date().toISOString(),
-        })
+        .update({ is_og: true, updated_at: nowIso })
         .eq("fid", fid);
 
-      if (updateErr) {
-        console.error("User OG update error:", updateErr);
-      } else {
-        console.log(`Set is_og = true for fid ${fid}`);
+      if (updErr) {
+        console.error("users is_og update error:", updErr);
+        return NextResponse.json({ error: "Failed to set OG" }, { status: 500 });
       }
     } else {
-      console.warn("Unknown payment kind in confirm:", kind);
+      console.warn("Unknown payment kind:", kind);
     }
 
-    // 5) Payment státusz frissítés
+    // 5) payment rekord completed
     const { error: statusErr } = await supabase
       .from("payments")
-      .update({
-        status: "completed",
-        updated_at: new Date().toISOString(),
-      })
+      .update({ status: "completed", updated_at: nowIso })
       .eq("id", payment.id);
 
     if (statusErr) {
-      console.error("Payment status update error:", statusErr);
+      console.error("payments status update error:", statusErr);
+      // nem bukjuk el, a jóváírás megvolt
     }
 
     return NextResponse.json({ status: "completed" });
-  } catch (error) {
-    console.error("Error in /api/pay/confirm:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+  } catch (e) {
+    console.error("Error in /api/pay/confirm:", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
