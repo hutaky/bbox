@@ -1,7 +1,6 @@
 // src/app/api/pay/extra/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import crypto from "crypto";
 
 export const runtime = "nodejs";
 
@@ -9,9 +8,9 @@ const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 
-const PRICE_1 = Number(process.env.BBOX_EXTRA_PRICE_1 || "0.5");   // 1 pick
-const PRICE_5 = Number(process.env.BBOX_EXTRA_PRICE_5 || "2.0");   // 5 pick
-const PRICE_10 = Number(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
+const PRICE_1 = String(process.env.BBOX_EXTRA_PRICE_1 || "0.5"); // 1 pick
+const PRICE_5 = String(process.env.BBOX_EXTRA_PRICE_5 || "2.0"); // 5 pick
+const PRICE_10 = String(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -25,29 +24,31 @@ type Body = {
   packSize: 1 | 5 | 10;
 };
 
-function makeIdemKey() {
-  // Neynar docs: 16 karakter ajánlott (de bármilyen egyedi kulcs jó)
-  return crypto.randomBytes(8).toString("hex"); // 16 hex char
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
     const fid = body?.fid;
     const packSize = body?.packSize;
 
-    if (!fid || !packSize) {
+    if (!fid || !Number.isFinite(fid) || !packSize) {
       return NextResponse.json({ error: "Missing fid or packSize" }, { status: 400 });
     }
 
     if (!NEYNAR_API_KEY || !RECEIVER_ADDRESS || !USDC_CONTRACT) {
       return NextResponse.json(
-        { error: "Server misconfigured (missing Neynar envs)" },
+        {
+          error: "Server misconfigured (Neynar env missing)",
+          missing: {
+            NEYNAR_API_KEY: !NEYNAR_API_KEY,
+            NEYNAR_PAY_RECEIVER_ADDRESS: !RECEIVER_ADDRESS,
+            NEYNAR_USDC_CONTRACT: !USDC_CONTRACT,
+          },
+        },
         { status: 500 }
       );
     }
 
-    let amount: number;
+    let amount: string;
     let lineItemName: string;
 
     switch (packSize) {
@@ -67,38 +68,37 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Invalid packSize" }, { status: 400 });
     }
 
-    const idem = makeIdemKey();
-
-    // ⚠️ FONTOS: Neynar body-ban NINCS metadata (docs szerint transaction+config+idem)
     const payload = {
       transaction: {
         to: {
           network: "base",
           address: RECEIVER_ADDRESS,
           token_contract_address: USDC_CONTRACT,
-          amount, // number, pl. 0.5
+          amount, // string!
         },
       },
       config: {
         line_items: [
           {
             name: lineItemName,
-            description: `Extra picks for FID ${fid}`,
+            description: `Extra BBOX picks for FID ${fid}`,
             image: "https://box-sage.vercel.app/icon.png",
           },
         ],
-        // Biztonság: csak ez a fid használhassa a pay frame-et
-        allowlist_fids: [fid],
         action: {
           text: "Pay with USDC",
           text_color: "#FFFFFF",
           button_color: "#0052FF",
         },
       },
-      idem,
+      metadata: {
+        kind: "extra_picks",
+        fid,
+        pack_size: packSize,
+      },
     };
 
-    const res = await fetch("https://api.neynar.com/v2/farcaster/frame/transaction/pay/", {
+    const res = await fetch("https://api.neynar.com/v2/farcaster/frame/transaction/pay", {
       method: "POST",
       headers: {
         accept: "application/json",
@@ -108,39 +108,50 @@ export async function POST(req: Request) {
       body: JSON.stringify(payload),
     });
 
+    const rawText = await res.text().catch(() => "");
+    let data: any = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      data = rawText;
+    }
+
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.error("Neynar pay error:", res.status, text);
+      console.error("Neynar pay error:", res.status, data);
       return NextResponse.json(
-        { error: "Failed to create Neynar pay frame", details: text },
+        {
+          error: "Failed to create Neynar pay frame",
+          neynarStatus: res.status,
+          neynarBody: data,
+        },
         { status: 500 }
       );
     }
 
-    const data = await res.json();
     const frameUrl = data?.transaction_frame?.url as string | undefined;
     const frameId = data?.transaction_frame?.id as string | undefined;
 
     if (!frameUrl || !frameId) {
       console.error("Invalid Neynar pay response:", data);
-      return NextResponse.json({ error: "Invalid Neynar response" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "Invalid Neynar response (missing frameUrl/frameId)",
+          neynarBody: data,
+        },
+        { status: 500 }
+      );
     }
 
-    // Mentjük Supabase-be: ebből fogunk jóváírni confirm-nál (metadata nélkül)
+    // Payment record
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
       kind: "extra_picks",
       pack_size: packSize,
       frame_id: frameId,
       status: "pending",
-      updated_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
     });
 
-    if (insertError) {
-      console.error("Failed to insert payment record:", insertError);
-      // Ettől még visszaadjuk a frame-et, csak logoljuk.
-    }
+    if (insertError) console.error("Failed to insert payment record:", insertError);
 
     return NextResponse.json({ frameUrl, frameId });
   } catch (error) {
