@@ -1,7 +1,7 @@
 // src/app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
@@ -53,7 +53,6 @@ export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
   const [loading, setLoading] = useState(true);
-
   const [picking, setPicking] = useState(false);
   const [countdown, setCountdown] = useState<string>("");
 
@@ -62,43 +61,21 @@ export default function HomePage() {
 
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showOgModal, setShowOgModal] = useState(false);
-
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
 
-  // webhook nélkül pollinghoz:
-  const [pendingFrameId, setPendingFrameId] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
-
-  const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
-
-  const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-  const rankLabel = user?.isOg
-    ? user?.isPro
-      ? "BOX PRO OG"
-      : "BOX OG"
-    : user?.isPro
-    ? "BOX PRO"
-    : "BOX Based";
-
-  const canPick = useMemo(() => {
-    return (
-      (user?.freePicksRemaining ?? 0) > 0 ||
-      (user?.extraPicksRemaining ?? 0) > 0
-    );
-  }, [user?.freePicksRemaining, user?.extraPicksRemaining]);
+  const pendingPaymentRef = useRef<{ frameId: string; fid: number } | null>(null);
+  const pollTimerRef = useRef<any>(null);
 
   async function loadUserState(
     currentFid: number | null,
     profile?: { username?: string | null; pfpUrl?: string | null }
   ) {
     if (!currentFid) return;
-
     try {
       const res = await fetch("/api/me", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        cache: "no-store",
         body: JSON.stringify({
           fid: currentFid,
           username: profile?.username ?? null,
@@ -106,9 +83,7 @@ export default function HomePage() {
         }),
       });
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data) return;
-
+      const data = await res.json();
       setUser(data);
 
       if (data?.nextFreePickAt) setCountdown(formatCountdown(data.nextFreePickAt));
@@ -120,7 +95,6 @@ export default function HomePage() {
     }
   }
 
-  // ---- init Farcaster context ----
   useEffect(() => {
     let cancelled = false;
 
@@ -134,12 +108,7 @@ export default function HomePage() {
       try {
         const context: any = await sdk.context;
 
-        const ctxUser =
-          context?.user ??
-          context?.viewer ??
-          context?.viewerContext?.user ??
-          null;
-
+        const ctxUser = context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
         const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
@@ -149,11 +118,7 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl:
-            ctxUser?.pfpUrl ??
-            ctxUser?.pfp_url ??
-            ctxUser?.pfp?.url ??
-            null,
+          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
         };
 
         const queryFid = getFidFromQuery();
@@ -180,10 +145,10 @@ export default function HomePage() {
 
     return () => {
       cancelled = true;
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, []);
 
-  // ---- countdown tick ----
   useEffect(() => {
     if (!user?.nextFreePickAt) {
       setCountdown("Ready");
@@ -195,7 +160,8 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
-  // ---- pick ----
+  const canPick = (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
     if (!canPick) return;
@@ -205,16 +171,17 @@ export default function HomePage() {
       const res = await fetch("/api/pick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        cache: "no-store",
         body: JSON.stringify({ fid, boxIndex }),
       });
 
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         console.error("Pick error:", data);
         alert(data.error ?? "Failed to open box.");
         return;
       }
+
+      const data = await res.json();
 
       const updated: ApiUserState = {
         ...user,
@@ -229,11 +196,7 @@ export default function HomePage() {
       };
 
       setUser(updated);
-      setLastResult({
-        rarity: data.rarity,
-        points: data.points,
-        openedAt: new Date().toISOString(),
-      });
+      setLastResult({ rarity: data.rarity, points: data.points, openedAt: new Date().toISOString() });
       setShowResultModal(true);
     } catch (err) {
       console.error("Pick failed:", err);
@@ -243,17 +206,16 @@ export default function HomePage() {
     }
   }
 
-  // ---- share ----
   async function handleShareResult() {
-    if (!lastResult) return;
+    if (!lastResult || !user) return;
 
     const rarityLabel = lastResult.rarity.toLowerCase();
     const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
-
     const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
-    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
-      fullText
-    )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
+
+    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(fullText)}&embeds[]=${encodeURIComponent(
+      BBOX_URL
+    )}`;
 
     try {
       await sdk.actions.openUrl(composeUrl);
@@ -263,54 +225,54 @@ export default function HomePage() {
     }
   }
 
-  // ---- confirm polling (webhook nélkül) ----
-  async function pollConfirm(frameId: string) {
-    if (!fid) return;
+  async function startConfirmPolling(payment: { frameId: string; fid: number }) {
+    pendingPaymentRef.current = payment;
 
-    setPolling(true);
-    const startedAt = Date.now();
-    const timeoutMs = 60_000;
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
 
-    try {
-      while (Date.now() - startedAt < timeoutMs) {
+    let tries = 0;
+    pollTimerRef.current = setInterval(async () => {
+      tries += 1;
+      if (tries > 60) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+        setBuyLoading(false);
+        setBuyError("Payment not confirmed yet. Please try again in a moment.");
+        return;
+      }
+
+      try {
         const res = await fetch("/api/pay/confirm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fid: payment.fid, frameId: payment.frameId }),
           cache: "no-store",
-          body: JSON.stringify({ fid, frameId }),
         });
 
         const data = await res.json().catch(() => ({}));
-
-        if (res.ok && (data?.status === "completed" || data?.status === "already_completed")) {
-          // frissítsünk mindent
-          await loadUserState(fid);
-          setPendingFrameId(null);
-          setPolling(false);
+        if (!res.ok) {
+          // ha itt 500, legalább látod a hibát
+          console.error("confirm error:", data);
           return;
         }
 
-        // pending' eset
-        await new Promise((r) => setTimeout(r, 2000));
-      }
+        if (data.status === "completed" || data.status === "already_completed") {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
 
-      setBuyError("Payment still pending. If you completed it, try again in a minute.");
-    } catch (e) {
-      console.error("confirm polling error:", e);
-      setBuyError("Could not confirm payment. Please try again.");
-    } finally {
-      setPolling(false);
-    }
+          await loadUserState(payment.fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+
+          setBuyLoading(false);
+          setBuyError(null);
+          setShowBuyModal(false);
+          setShowOgModal(false);
+        }
+      } catch (e) {
+        console.error("confirm polling exception:", e);
+      }
+    }, 2000);
   }
 
-  // ha van pendingFrameId → indul a polling
-  useEffect(() => {
-    if (!pendingFrameId) return;
-    void pollConfirm(pendingFrameId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingFrameId]);
-
-  // ---- Neynar Pay: extra picks ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -321,17 +283,19 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
+      // FONTOS: /api/pay/extra (nem buy)
       const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        cache: "no-store",
         body: JSON.stringify({ fid, packSize }),
       });
 
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        console.error("pay/extra failed:", data);
+        console.error("pay/extra error:", data);
         setBuyError(data.error ?? "Failed to create Neynar pay frame");
+        setBuyLoading(false);
         return;
       }
 
@@ -340,24 +304,22 @@ export default function HomePage() {
 
       if (!frameUrl || !frameId) {
         setBuyError("Invalid pay response (missing frameUrl/frameId).");
+        setBuyLoading(false);
         return;
       }
 
-      // 1) nyissuk meg a pay framet
+      // Nyitjuk a fizetési framet
       await sdk.actions.openUrl(frameUrl);
 
-      // 2) zárjuk a modalt és polloljuk a confirmot
-      setShowBuyModal(false);
-      setPendingFrameId(frameId);
+      // Webhook nélkül: polling confirm
+      await startConfirmPolling({ fid, frameId });
     } catch (err) {
       console.error("Error in handleBuyExtra:", err);
       setBuyError("Something went wrong, try again.");
-    } finally {
       setBuyLoading(false);
     }
   }
 
-  // ---- Neynar Pay: OG rank ----
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -371,14 +333,15 @@ export default function HomePage() {
       const res = await fetch("/api/pay/og", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        cache: "no-store",
         body: JSON.stringify({ fid }),
       });
 
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        console.error("pay/og failed:", data);
-        setBuyError(data.error ?? "Failed to create Neynar pay frame");
+        console.error("pay/og error:", data);
+        setBuyError(data.error ?? "Failed to create Neynar OG pay frame");
+        setBuyLoading(false);
         return;
       }
 
@@ -387,22 +350,19 @@ export default function HomePage() {
 
       if (!frameUrl || !frameId) {
         setBuyError("Invalid pay response (missing frameUrl/frameId).");
+        setBuyLoading(false);
         return;
       }
 
       await sdk.actions.openUrl(frameUrl);
-
-      setShowOgModal(false);
-      setPendingFrameId(frameId);
+      await startConfirmPolling({ fid, frameId });
     } catch (err) {
       console.error("Error in handleBuyOg:", err);
       setBuyError("Something went wrong, try again.");
-    } finally {
       setBuyLoading(false);
     }
   }
 
-  // ---- UI helpers ----
   function renderRarityLabel(rarity: BoxRarity) {
     switch (rarity) {
       case "COMMON":
@@ -431,6 +391,11 @@ export default function HomePage() {
         return <span className={`${baseClass} border-legendary text-legendary`}>LEGENDARY</span>;
     }
   }
+
+  const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
+
+  const league = getLeagueFromPoints(user?.totalPoints ?? 0);
+  const rankLabel = user?.isOg ? (user?.isPro ? "BOX PRO OG" : "BOX OG") : user?.isPro ? "BOX PRO" : "BOX Based";
 
   if (loading) {
     return (
@@ -496,38 +461,25 @@ export default function HomePage() {
             <div className="flex-1">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
-                <span className="font-semibold text-[13px] text-[#E6EBFF]">
-                  {user?.totalPoints ?? 0}
-                </span>
+                <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
               </div>
-
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
-                <span className="font-medium text-emerald-300">
-                  {user?.extraPicksRemaining ?? 0}
-                </span>
+                <span className="font-medium text-emerald-300">{user?.extraPicksRemaining ?? 0}</span>
               </div>
-
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
                 <span>Free picks:</span>
-                <span className="font-medium text-sky-300">
-                  {user?.freePicksRemaining ?? 0}
-                </span>
+                <span className="font-medium text-sky-300">{user?.freePicksRemaining ?? 0}</span>
               </div>
-
               <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
                 <span>Next free box:</span>
-                <span className="font-semibold text-emerald-300">
-                  {countdown || "Ready"}
-                </span>
+                <span className="font-semibold text-emerald-300">{countdown || "Ready"}</span>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
               <div className="px-3 py-2 rounded-2xl bg-gradient-to-br from-[#14162F] via-[#191B3D] to-[#050315] border border-[#2B3170] shadow-[0_0_20px_rgba(124,58,237,0.3)] min-w-[120px]">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">
-                  {rankLabel}
-                </div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">{rankLabel}</div>
                 <div className="text-xs font-semibold text-[#F4F0FF]">{league}</div>
               </div>
 
@@ -545,8 +497,8 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy
-              extra picks to keep opening today.
+              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening
+              today.
             </p>
           </div>
         )}
@@ -573,36 +525,24 @@ export default function HomePage() {
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/35 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
-
                 <div className="relative z-10 h-full flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/75 to-[#00C2FF]/35 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-8 h-8 text-white/90"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                    >
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/80 to-[#00C2FF]/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-white/90" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
                       <path d="M3.3 7L12 12l8.7-5" />
                       <path d="M12 22V12" />
                     </svg>
                   </div>
                 </div>
-
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
-                  <span className="text-[11px] text-gray-300 group-hover:text-white transition">
-                    Tap to open
-                  </span>
+                  <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
                 </div>
               </button>
             ))}
           </div>
 
           <button
-            onClick={() =>
-              canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true)
-            }
+            onClick={() => (canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true))}
             disabled={picking}
             className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
               ${
@@ -637,23 +577,14 @@ export default function HomePage() {
       {showResultModal && lastResult && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
           <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-            <button
-              onClick={() => setShowResultModal(false)}
-              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
-            >
+            <button onClick={() => setShowResultModal(false)} className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm">
               ✕
             </button>
             <div className="text-center mt-2">
               <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
-              <h3 className="text-sm font-semibold mb-2">
-                You opened a {renderRarityLabel(lastResult.rarity)}!
-              </h3>
-              <p className="text-lg font-bold text-[#00C2FF] mb-1">
-                Reward: +{lastResult.points} points
-              </p>
-              <p className="text-xs text-gray-400 mb-4">
-                Keep opening boxes to climb the leaderboard.
-              </p>
+              <h3 className="text-sm font-semibold mb-2">You opened a {renderRarityLabel(lastResult.rarity)}!</h3>
+              <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
+              <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
               <button
                 onClick={handleShareResult}
                 className="w-full py-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#00C2FF] hover:brightness-110 text-xs font-semibold mb-2"
@@ -687,49 +618,39 @@ export default function HomePage() {
 
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
-              <p className="text-[11px] text-gray-400">
-                Picks don&apos;t expire and can be used on any day.
-              </p>
+              <p className="text-[11px] text-gray-400">Picks don't expire and can be used on any day.</p>
             </div>
 
             <div className="space-y-2 mb-3">
               <button
-                disabled={buyLoading || polling}
+                disabled={buyLoading}
                 onClick={() => handleBuyExtra(1)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">
-                  {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}
-                </span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}</span>
               </button>
-
               <button
-                disabled={buyLoading || polling}
+                disabled={buyLoading}
                 onClick={() => handleBuyExtra(5)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">
-                  {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}
-                </span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}</span>
               </button>
-
               <button
-                disabled={buyLoading || polling}
+                disabled={buyLoading}
                 onClick={() => handleBuyExtra(10)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">
-                  {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}
-                </span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}</span>
               </button>
             </div>
 
             <div className="border-t border-zinc-800 pt-3 mt-2">
               <button
-                disabled={buyLoading || polling}
+                disabled={buyLoading}
                 onClick={() => {
                   setShowBuyModal(false);
                   setShowOgModal(true);
@@ -741,15 +662,8 @@ export default function HomePage() {
               </button>
             </div>
 
-            {buyError && (
-              <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>
-            )}
-
-            {(buyLoading || polling) && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">
-                {buyLoading ? "Opening payment flow…" : "Confirming payment…"}
-              </p>
-            )}
+            {buyError && <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>}
+            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Opening payment flow…</p>}
           </div>
         </div>
       )}
@@ -776,29 +690,19 @@ export default function HomePage() {
             </div>
 
             <button
-              disabled={buyLoading || polling}
+              disabled={buyLoading}
               onClick={handleBuyOg}
               className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2"
             >
               Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
             </button>
 
-            <button
-              onClick={() => setShowOgModal(false)}
-              className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
-            >
+            <button onClick={() => setShowOgModal(false)} className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900">
               Maybe later
             </button>
 
-            {buyError && (
-              <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>
-            )}
-
-            {(buyLoading || polling) && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">
-                {buyLoading ? "Opening payment flow…" : "Confirming payment…"}
-              </p>
-            )}
+            {buyError && <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>}
+            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Opening payment flow…</p>}
           </div>
         </div>
       )}
