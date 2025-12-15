@@ -1,13 +1,12 @@
 // src/app/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
 
-// ✅ állítsd a SAJÁT deploy URL-edre (ez kerül a share-be + embedbe is)
-const BBOX_URL = "https://box-sage.vercel.app";
+const BBOX_URL = "https://box-sage.vercel.app"; // a saját deploy URL-ed
 
 type BoxRarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
 
@@ -63,28 +62,53 @@ export default function HomePage() {
 
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showOgModal, setShowOgModal] = useState(false);
+
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
 
-  // ---- User state betöltése ----
+  // webhook nélkül pollinghoz:
+  const [pendingFrameId, setPendingFrameId] = useState<string | null>(null);
+  const [polling, setPolling] = useState(false);
+
+  const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
+
+  const league = getLeagueFromPoints(user?.totalPoints ?? 0);
+  const rankLabel = user?.isOg
+    ? user?.isPro
+      ? "BOX PRO OG"
+      : "BOX OG"
+    : user?.isPro
+    ? "BOX PRO"
+    : "BOX Based";
+
+  const canPick = useMemo(() => {
+    return (
+      (user?.freePicksRemaining ?? 0) > 0 ||
+      (user?.extraPicksRemaining ?? 0) > 0
+    );
+  }, [user?.freePicksRemaining, user?.extraPicksRemaining]);
+
   async function loadUserState(
     currentFid: number | null,
     profile?: { username?: string | null; pfpUrl?: string | null }
   ) {
     if (!currentFid) return;
+
     try {
       const res = await fetch("/api/me", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({
           fid: currentFid,
           username: profile?.username ?? null,
           pfpUrl: profile?.pfpUrl ?? null,
         }),
-        cache: "no-store",
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) return;
+
       setUser(data);
 
       if (data?.nextFreePickAt) setCountdown(formatCountdown(data.nextFreePickAt));
@@ -96,7 +120,7 @@ export default function HomePage() {
     }
   }
 
-  // ---- Mini app init (Farcaster SDK) ----
+  // ---- init Farcaster context ----
   useEffect(() => {
     let cancelled = false;
 
@@ -111,7 +135,10 @@ export default function HomePage() {
         const context: any = await sdk.context;
 
         const ctxUser =
-          context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
+          context?.user ??
+          context?.viewer ??
+          context?.viewerContext?.user ??
+          null;
 
         const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
@@ -122,7 +149,11 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
+          pfpUrl:
+            ctxUser?.pfpUrl ??
+            ctxUser?.pfp_url ??
+            ctxUser?.pfp?.url ??
+            null,
         };
 
         const queryFid = getFidFromQuery();
@@ -152,7 +183,7 @@ export default function HomePage() {
     };
   }, []);
 
-  // ---- Countdown frissítése ----
+  // ---- countdown tick ----
   useEffect(() => {
     if (!user?.nextFreePickAt) {
       setCountdown("Ready");
@@ -164,10 +195,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
-  const canPick =
-    (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
-
-  // ---- Box pick ----
+  // ---- pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
     if (!canPick) return;
@@ -177,17 +205,16 @@ export default function HomePage() {
       const res = await fetch("/api/pick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({ fid, boxIndex }),
       });
 
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         console.error("Pick error:", data);
         alert(data.error ?? "Failed to open box.");
         return;
       }
-
-      const data = await res.json();
 
       const updated: ApiUserState = {
         ...user,
@@ -216,15 +243,14 @@ export default function HomePage() {
     }
   }
 
-  // ---- Sharing ----
+  // ---- share ----
   async function handleShareResult() {
-    if (!lastResult || !user) return;
+    if (!lastResult) return;
 
     const rarityLabel = lastResult.rarity.toLowerCase();
     const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
-    const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
 
-    // ✅ compose + embed (frame linkként is bekerül)
+    const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
     const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
       fullText
     )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
@@ -237,35 +263,54 @@ export default function HomePage() {
     }
   }
 
-  // ---- Poll confirm helper (webhook nélkül) ----
-  async function pollPaymentUntilCompleted(currentFid: number, frameId: string) {
-    const started = Date.now();
-    const timeoutMs = 90_000; // 90 sec
-    const intervalMs = 2000;
+  // ---- confirm polling (webhook nélkül) ----
+  async function pollConfirm(frameId: string) {
+    if (!fid) return;
 
-    while (Date.now() - started < timeoutMs) {
-      const res = await fetch("/api/pay/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid: currentFid, frameId }),
-        cache: "no-store",
-      });
+    setPolling(true);
+    const startedAt = Date.now();
+    const timeoutMs = 60_000;
 
-      const data = await res.json().catch(() => ({}));
-      if (
-        res.ok &&
-        (data.status === "completed" || data.status === "already_completed")
-      ) {
-        return true;
+    try {
+      while (Date.now() - startedAt < timeoutMs) {
+        const res = await fetch("/api/pay/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ fid, frameId }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && (data?.status === "completed" || data?.status === "already_completed")) {
+          // frissítsünk mindent
+          await loadUserState(fid);
+          setPendingFrameId(null);
+          setPolling(false);
+          return;
+        }
+
+        // pending' eset
+        await new Promise((r) => setTimeout(r, 2000));
       }
 
-      await new Promise((r) => setTimeout(r, intervalMs));
+      setBuyError("Payment still pending. If you completed it, try again in a minute.");
+    } catch (e) {
+      console.error("confirm polling error:", e);
+      setBuyError("Could not confirm payment. Please try again.");
+    } finally {
+      setPolling(false);
     }
-
-    return false;
   }
 
-  // ---- Neynar Pay: extra picks (✅ pay/extra + polling) ----
+  // ha van pendingFrameId → indul a polling
+  useEffect(() => {
+    if (!pendingFrameId) return;
+    void pollConfirm(pendingFrameId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFrameId]);
+
+  // ---- Neynar Pay: extra picks ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -276,37 +321,34 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
-      // ✅ HELYES endpoint
       const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({ fid, packSize }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        console.error("pay/extra error:", data);
-        setBuyError(data.error ?? "Payment init failed.");
+        console.error("pay/extra failed:", data);
+        setBuyError(data.error ?? "Failed to create Neynar pay frame");
         return;
       }
 
-      const { frameUrl, frameId } = data as { frameUrl: string; frameId: string };
+      const frameUrl = data.frameUrl as string | undefined;
+      const frameId = data.frameId as string | undefined;
+
       if (!frameUrl || !frameId) {
-        setBuyError("Invalid payment response.");
+        setBuyError("Invalid pay response (missing frameUrl/frameId).");
         return;
       }
 
-      // 1) Neynar Pay frame megnyitása
+      // 1) nyissuk meg a pay framet
       await sdk.actions.openUrl(frameUrl);
 
-      // 2) Polling confirm → jóváírás → user state refresh
-      const ok = await pollPaymentUntilCompleted(fid, frameId);
-      if (ok) {
-        await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
-        setShowBuyModal(false);
-      } else {
-        setBuyError("Payment not confirmed yet. If you paid, wait a bit and try again.");
-      }
+      // 2) zárjuk a modalt és polloljuk a confirmot
+      setShowBuyModal(false);
+      setPendingFrameId(frameId);
     } catch (err) {
       console.error("Error in handleBuyExtra:", err);
       setBuyError("Something went wrong, try again.");
@@ -315,7 +357,7 @@ export default function HomePage() {
     }
   }
 
-  // ---- Neynar Pay: OG rank (✅ pay/og + polling) ----
+  // ---- Neynar Pay: OG rank ----
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -326,35 +368,32 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
-      // ✅ HELYES endpoint
       const res = await fetch("/api/pay/og", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({ fid }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        console.error("pay/og error:", data);
-        setBuyError(data.error ?? "Payment init failed.");
+        console.error("pay/og failed:", data);
+        setBuyError(data.error ?? "Failed to create Neynar pay frame");
         return;
       }
 
-      const { frameUrl, frameId } = data as { frameUrl: string; frameId: string };
+      const frameUrl = data.frameUrl as string | undefined;
+      const frameId = data.frameId as string | undefined;
+
       if (!frameUrl || !frameId) {
-        setBuyError("Invalid payment response.");
+        setBuyError("Invalid pay response (missing frameUrl/frameId).");
         return;
       }
 
       await sdk.actions.openUrl(frameUrl);
 
-      const ok = await pollPaymentUntilCompleted(fid, frameId);
-      if (ok) {
-        await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
-        setShowOgModal(false);
-      } else {
-        setBuyError("Payment not confirmed yet. If you paid, wait a bit and try again.");
-      }
+      setShowOgModal(false);
+      setPendingFrameId(frameId);
     } catch (err) {
       console.error("Error in handleBuyOg:", err);
       setBuyError("Something went wrong, try again.");
@@ -392,17 +431,6 @@ export default function HomePage() {
         return <span className={`${baseClass} border-legendary text-legendary`}>LEGENDARY</span>;
     }
   }
-
-  const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
-
-  const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-  const rankLabel = user?.isOg
-    ? user?.isPro
-      ? "BOX PRO OG"
-      : "BOX OG"
-    : user?.isPro
-    ? "BOX PRO"
-    : "BOX Based";
 
   if (loading) {
     return (
@@ -468,22 +496,30 @@ export default function HomePage() {
             <div className="flex-1">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
-                <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
+                <span className="font-semibold text-[13px] text-[#E6EBFF]">
+                  {user?.totalPoints ?? 0}
+                </span>
               </div>
 
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
-                <span className="font-medium text-emerald-300">{user?.extraPicksRemaining ?? 0}</span>
+                <span className="font-medium text-emerald-300">
+                  {user?.extraPicksRemaining ?? 0}
+                </span>
               </div>
 
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
                 <span>Free picks:</span>
-                <span className="font-medium text-sky-300">{user?.freePicksRemaining ?? 0}</span>
+                <span className="font-medium text-sky-300">
+                  {user?.freePicksRemaining ?? 0}
+                </span>
               </div>
 
               <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
                 <span>Next free box:</span>
-                <span className="font-semibold text-emerald-300">{countdown || "Ready"}</span>
+                <span className="font-semibold text-emerald-300">
+                  {countdown || "Ready"}
+                </span>
               </div>
             </div>
 
@@ -505,12 +541,12 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* INFO / NO PICKS MESSAGE */}
         {!canPick && (
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
+              Wait until the timer hits <span className="font-semibold">Ready</span> or buy
+              extra picks to keep opening today.
             </p>
           </div>
         )}
@@ -535,11 +571,11 @@ export default function HomePage() {
                       : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
                   }`}
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/35 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
 
                 <div className="relative z-10 h-full flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/80 to-[#00C2FF]/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/75 to-[#00C2FF]/35 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
                     <svg
                       viewBox="0 0 24 24"
                       className="w-8 h-8 text-white/90"
@@ -581,7 +617,6 @@ export default function HomePage() {
           </button>
         </section>
 
-        {/* NAV BUTTONS */}
         <section className="flex gap-2">
           <Link
             href="/leaderboard"
@@ -659,42 +694,48 @@ export default function HomePage() {
 
             <div className="space-y-2 mb-3">
               <button
-                disabled={buyLoading}
+                disabled={buyLoading || polling}
                 onClick={() => handleBuyExtra(1)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs disabled:opacity-60"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}
+                </span>
               </button>
 
               <button
-                disabled={buyLoading}
+                disabled={buyLoading || polling}
                 onClick={() => handleBuyExtra(5)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs disabled:opacity-60"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}
+                </span>
               </button>
 
               <button
-                disabled={buyLoading}
+                disabled={buyLoading || polling}
                 onClick={() => handleBuyExtra(10)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs disabled:opacity-60"
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}
+                </span>
               </button>
             </div>
 
             <div className="border-t border-zinc-800 pt-3 mt-2">
               <button
-                disabled={buyLoading}
+                disabled={buyLoading || polling}
                 onClick={() => {
                   setShowBuyModal(false);
                   setShowOgModal(true);
                   setBuyError(null);
                 }}
-                className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted disabled:opacity-60"
+                className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
               >
                 Become an OG box opener
               </button>
@@ -704,9 +745,9 @@ export default function HomePage() {
               <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>
             )}
 
-            {buyLoading && (
+            {(buyLoading || polling) && (
               <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Opening payment flow… (waiting for confirmation)
+                {buyLoading ? "Opening payment flow…" : "Confirming payment…"}
               </p>
             )}
           </div>
@@ -735,9 +776,9 @@ export default function HomePage() {
             </div>
 
             <button
-              disabled={buyLoading}
+              disabled={buyLoading || polling}
               onClick={handleBuyOg}
-              className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2 disabled:opacity-60"
+              className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2"
             >
               Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
             </button>
@@ -753,9 +794,9 @@ export default function HomePage() {
               <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>
             )}
 
-            {buyLoading && (
+            {(buyLoading || polling) && (
               <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Opening payment flow… (waiting for confirmation)
+                {buyLoading ? "Opening payment flow…" : "Confirming payment…"}
               </p>
             )}
           </div>
