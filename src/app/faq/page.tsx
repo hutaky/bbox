@@ -149,7 +149,7 @@ export default function FAQPage() {
               What is BBOX?
             </h3>
             <p className="text-[13px] text-gray-300">
-              BBOX is a daily box-opening mini-game on Farcaster.  
+              BBOX is a daily box-opening mini-game.  
               You open boxes, collect points and try to climb as high
               as possible on the leaderboard each season.
             </p>
