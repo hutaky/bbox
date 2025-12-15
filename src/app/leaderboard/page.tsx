@@ -168,7 +168,7 @@ export default function LeaderboardPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight">BBOX</h1>
               <span className="px-2 py-[2px] rounded-full text-[10px] font-semibold bg-emerald-500/10 border border-emerald-400/60 text-emerald-200">
-                Daily Box
+                Season 0
               </span>
             </div>
             <p className="text-[11px] text-gray-400 flex items-center gap-1">
