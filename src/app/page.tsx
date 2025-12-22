@@ -49,6 +49,50 @@ function getLeagueFromPoints(points: number): string {
   return "Bronze League";
 }
 
+/**
+ * Debug helper:
+ * - megpróbálja szépen kinyerni a backend JSON-ból a Neynar hibát (status/body),
+ * - és emberi olvashatóvá teszi a modal piros sorába.
+ */
+function buildPayDebugMessage(
+  fallback: string,
+  resStatus: number,
+  data: any
+): string {
+  const base = data?.error ?? fallback;
+
+  // a backendnél gyakran így érdemes visszaadni: { error, neynarStatus, neynarBody, details }
+  const neynarStatus = data?.neynarStatus ?? data?.status ?? null;
+  const neynarBody = data?.neynarBody ?? data?.body ?? null;
+  const details = data?.details ?? null;
+
+  const parts: string[] = [];
+
+  // HTTP státusz a saját API-dtól (pl. 500)
+  parts.push(`apiStatus: ${resStatus}`);
+
+  if (neynarStatus) parts.push(`neynarStatus: ${neynarStatus}`);
+
+  // Body stringify (röviden)
+  const formatObj = (obj: any) => {
+    try {
+      if (obj == null) return "";
+      if (typeof obj === "string") return obj.slice(0, 700);
+      return JSON.stringify(obj, null, 2).slice(0, 700);
+    } catch {
+      return String(obj).slice(0, 700);
+    }
+  };
+
+  const bodyStr = formatObj(neynarBody);
+  if (bodyStr) parts.push(`neynarBody: ${bodyStr}`);
+
+  const detailsStr = formatObj(details);
+  if (detailsStr) parts.push(`details: ${detailsStr}`);
+
+  return `${base}\n\n[debug]\n${parts.join("\n")}`;
+}
+
 export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
@@ -64,7 +108,9 @@ export default function HomePage() {
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
 
-  const pendingPaymentRef = useRef<{ frameId: string; fid: number } | null>(null);
+  const pendingPaymentRef = useRef<{ frameId: string; fid: number } | null>(
+    null
+  );
   const pollTimerRef = useRef<any>(null);
 
   async function loadUserState(
@@ -86,7 +132,8 @@ export default function HomePage() {
       const data = await res.json();
       setUser(data);
 
-      if (data?.nextFreePickAt) setCountdown(formatCountdown(data.nextFreePickAt));
+      if (data?.nextFreePickAt)
+        setCountdown(formatCountdown(data.nextFreePickAt));
       else setCountdown("Ready");
 
       if (data?.lastResult) setLastResult(data.lastResult);
@@ -108,8 +155,10 @@ export default function HomePage() {
       try {
         const context: any = await sdk.context;
 
-        const ctxUser = context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
-        const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
+        const ctxUser =
+          context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
+        const ctxFid: number | null =
+          ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
           username:
@@ -118,7 +167,8 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
+          pfpUrl:
+            ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
         };
 
         const queryFid = getFidFromQuery();
@@ -160,7 +210,9 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
-  const canPick = (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+  const canPick =
+    (user?.freePicksRemaining ?? 0) > 0 ||
+    (user?.extraPicksRemaining ?? 0) > 0;
 
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
@@ -196,7 +248,11 @@ export default function HomePage() {
       };
 
       setUser(updated);
-      setLastResult({ rarity: data.rarity, points: data.points, openedAt: new Date().toISOString() });
+      setLastResult({
+        rarity: data.rarity,
+        points: data.points,
+        openedAt: new Date().toISOString(),
+      });
       setShowResultModal(true);
     } catch (err) {
       console.error("Pick failed:", err);
@@ -213,9 +269,9 @@ export default function HomePage() {
     const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
     const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
 
-    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(fullText)}&embeds[]=${encodeURIComponent(
-      BBOX_URL
-    )}`;
+    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
+      fullText
+    )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
 
     try {
       await sdk.actions.openUrl(composeUrl);
@@ -237,7 +293,9 @@ export default function HomePage() {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
         setBuyLoading(false);
-        setBuyError("Payment not confirmed yet. Please try again in a moment.");
+        setBuyError(
+          "Payment not confirmed yet. Please try again in a moment."
+        );
         return;
       }
 
@@ -251,7 +309,7 @@ export default function HomePage() {
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          // ha itt 500, legalább látod a hibát
+          // confirmnál is logoljuk, hogy lássuk, mi van
           console.error("confirm error:", data);
           return;
         }
@@ -260,7 +318,10 @@ export default function HomePage() {
           clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
 
-          await loadUserState(payment.fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+          await loadUserState(payment.fid, {
+            username: user?.username ?? null,
+            pfpUrl: user?.pfpUrl ?? null,
+          });
 
           setBuyLoading(false);
           setBuyError(null);
@@ -273,6 +334,7 @@ export default function HomePage() {
     }, 2000);
   }
 
+  // ---- Neynar Pay: extra picks ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -283,7 +345,6 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
-      // FONTOS: /api/pay/extra (nem buy)
       const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -294,7 +355,7 @@ export default function HomePage() {
 
       if (!res.ok) {
         console.error("pay/extra error:", data);
-        setBuyError(data.error ?? "Failed to create Neynar pay frame");
+        setBuyError(buildPayDebugMessage("Failed to create Neynar pay frame", res.status, data));
         setBuyLoading(false);
         return;
       }
@@ -303,23 +364,31 @@ export default function HomePage() {
       const frameId = data.frameId as string | undefined;
 
       if (!frameUrl || !frameId) {
-        setBuyError("Invalid pay response (missing frameUrl/frameId).");
+        setBuyError(
+          buildPayDebugMessage(
+            "Invalid pay response (missing frameUrl/frameId).",
+            res.status,
+            data
+          )
+        );
         setBuyLoading(false);
         return;
       }
 
-      // Nyitjuk a fizetési framet
       await sdk.actions.openUrl(frameUrl);
 
       // Webhook nélkül: polling confirm
       await startConfirmPolling({ fid, frameId });
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error in handleBuyExtra:", err);
-      setBuyError("Something went wrong, try again.");
+      setBuyError(
+        `Something went wrong, try again.\n\n[debug]\n${String(err?.message ?? err)}`
+      );
       setBuyLoading(false);
     }
   }
 
+  // ---- Neynar Pay: OG ----
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -340,7 +409,7 @@ export default function HomePage() {
 
       if (!res.ok) {
         console.error("pay/og error:", data);
-        setBuyError(data.error ?? "Failed to create Neynar OG pay frame");
+        setBuyError(buildPayDebugMessage("Failed to create Neynar OG pay frame", res.status, data));
         setBuyLoading(false);
         return;
       }
@@ -349,16 +418,24 @@ export default function HomePage() {
       const frameId = data.frameId as string | undefined;
 
       if (!frameUrl || !frameId) {
-        setBuyError("Invalid pay response (missing frameUrl/frameId).");
+        setBuyError(
+          buildPayDebugMessage(
+            "Invalid pay response (missing frameUrl/frameId).",
+            res.status,
+            data
+          )
+        );
         setBuyLoading(false);
         return;
       }
 
       await sdk.actions.openUrl(frameUrl);
       await startConfirmPolling({ fid, frameId });
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error in handleBuyOg:", err);
-      setBuyError("Something went wrong, try again.");
+      setBuyError(
+        `Something went wrong, try again.\n\n[debug]\n${String(err?.message ?? err)}`
+      );
       setBuyLoading(false);
     }
   }
@@ -382,20 +459,33 @@ export default function HomePage() {
     const baseClass = "px-2 py-1 rounded-full text-xs font-semibold border";
     switch (rarity) {
       case "COMMON":
-        return <span className={`${baseClass} border-gray-500 text-gray-200`}>COMMON</span>;
+        return (
+          <span className={`${baseClass} border-gray-500 text-gray-200`}>
+            COMMON
+          </span>
+        );
       case "RARE":
         return <span className={`${baseClass} border-rare text-rare`}>RARE</span>;
       case "EPIC":
         return <span className={`${baseClass} border-epic text-epic`}>EPIC</span>;
       case "LEGENDARY":
-        return <span className={`${baseClass} border-legendary text-legendary`}>LEGENDARY</span>;
+        return (
+          <span className={`${baseClass} border-legendary text-legendary`}>
+            LEGENDARY
+          </span>
+        );
     }
   }
 
   const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
-
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-  const rankLabel = user?.isOg ? (user?.isPro ? "BOX PRO OG" : "BOX OG") : user?.isPro ? "BOX PRO" : "BOX Based";
+  const rankLabel = user?.isOg
+    ? user?.isPro
+      ? "BOX PRO OG"
+      : "BOX OG"
+    : user?.isPro
+    ? "BOX PRO"
+    : "BOX Based";
 
   if (loading) {
     return (
@@ -446,7 +536,9 @@ export default function HomePage() {
               </div>
             )}
             <div className="text-right">
-              <div className="text-sm font-medium truncate max-w-[120px]">{displayName}</div>
+              <div className="text-sm font-medium truncate max-w-[120px]">
+                {displayName}
+              </div>
               <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
@@ -461,26 +553,38 @@ export default function HomePage() {
             <div className="flex-1">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
-                <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
+                <span className="font-semibold text-[13px] text-[#E6EBFF]">
+                  {user?.totalPoints ?? 0}
+                </span>
               </div>
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
-                <span className="font-medium text-emerald-300">{user?.extraPicksRemaining ?? 0}</span>
+                <span className="font-medium text-emerald-300">
+                  {user?.extraPicksRemaining ?? 0}
+                </span>
               </div>
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
                 <span>Free picks:</span>
-                <span className="font-medium text-sky-300">{user?.freePicksRemaining ?? 0}</span>
+                <span className="font-medium text-sky-300">
+                  {user?.freePicksRemaining ?? 0}
+                </span>
               </div>
               <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
                 <span>Next free box:</span>
-                <span className="font-semibold text-emerald-300">{countdown || "Ready"}</span>
+                <span className="font-semibold text-emerald-300">
+                  {countdown || "Ready"}
+                </span>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
               <div className="px-3 py-2 rounded-2xl bg-gradient-to-br from-[#14162F] via-[#191B3D] to-[#050315] border border-[#2B3170] shadow-[0_0_20px_rgba(124,58,237,0.3)] min-w-[120px]">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">{rankLabel}</div>
-                <div className="text-xs font-semibold text-[#F4F0FF]">{league}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">
+                  {rankLabel}
+                </div>
+                <div className="text-xs font-semibold text-[#F4F0FF]">
+                  {league}
+                </div>
               </div>
 
               <button
@@ -497,8 +601,8 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening
-              today.
+              Wait until the timer hits <span className="font-semibold">Ready</span>{" "}
+              or buy extra picks to keep opening today.
             </p>
           </div>
         )}
@@ -527,7 +631,13 @@ export default function HomePage() {
                 <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
                 <div className="relative z-10 h-full flex items-center justify-center">
                   <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/80 to-[#00C2FF]/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
-                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-white/90" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-8 h-8 text-white/90"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                    >
                       <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
                       <path d="M3.3 7L12 12l8.7-5" />
                       <path d="M12 22V12" />
@@ -535,14 +645,18 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
-                  <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
+                  <span className="text-[11px] text-gray-300 group-hover:text-white transition">
+                    Tap to open
+                  </span>
                 </div>
               </button>
             ))}
           </div>
 
           <button
-            onClick={() => (canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true))}
+            onClick={() =>
+              canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true)
+            }
             disabled={picking}
             className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
               ${
@@ -577,14 +691,23 @@ export default function HomePage() {
       {showResultModal && lastResult && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
           <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-            <button onClick={() => setShowResultModal(false)} className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm">
+            <button
+              onClick={() => setShowResultModal(false)}
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
+            >
               ✕
             </button>
             <div className="text-center mt-2">
               <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
-              <h3 className="text-sm font-semibold mb-2">You opened a {renderRarityLabel(lastResult.rarity)}!</h3>
-              <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
-              <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
+              <h3 className="text-sm font-semibold mb-2">
+                You opened a {renderRarityLabel(lastResult.rarity)}!
+              </h3>
+              <p className="text-lg font-bold text-[#00C2FF] mb-1">
+                Reward: +{lastResult.points} points
+              </p>
+              <p className="text-xs text-gray-400 mb-4">
+                Keep opening boxes to climb the leaderboard.
+              </p>
               <button
                 onClick={handleShareResult}
                 className="w-full py-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#00C2FF] hover:brightness-110 text-xs font-semibold mb-2"
@@ -618,7 +741,9 @@ export default function HomePage() {
 
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
-              <p className="text-[11px] text-gray-400">Picks don't expire and can be used on any day.</p>
+              <p className="text-[11px] text-gray-400">
+                Picks don&apos;t expire and can be used on any day.
+              </p>
             </div>
 
             <div className="space-y-2 mb-3">
@@ -628,7 +753,9 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}
+                </span>
               </button>
               <button
                 disabled={buyLoading}
@@ -636,7 +763,9 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}
+                </span>
               </button>
               <button
                 disabled={buyLoading}
@@ -644,7 +773,9 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}
+                </span>
               </button>
             </div>
 
@@ -662,8 +793,20 @@ export default function HomePage() {
               </button>
             </div>
 
-            {buyError && <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>}
-            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Opening payment flow…</p>}
+            {/* 🔥 DEBUG-OLHATÓ hiba: több sorban, monospaced */}
+            {buyError && (
+              <div className="mt-3 text-[11px] text-red-300">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">
+                  {buyError}
+                </pre>
+              </div>
+            )}
+
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Opening payment flow…
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -697,12 +840,27 @@ export default function HomePage() {
               Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
             </button>
 
-            <button onClick={() => setShowOgModal(false)} className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900">
+            <button
+              onClick={() => setShowOgModal(false)}
+              className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
+            >
               Maybe later
             </button>
 
-            {buyError && <p className="mt-3 text-[11px] text-red-400 text-center">{buyError}</p>}
-            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Opening payment flow…</p>}
+            {/* 🔥 ugyanaz a debug kiírás OG modalban is */}
+            {buyError && (
+              <div className="mt-3 text-[11px] text-red-300">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">
+                  {buyError}
+                </pre>
+              </div>
+            )}
+
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Opening payment flow…
+              </p>
+            )}
           </div>
         </div>
       )}
