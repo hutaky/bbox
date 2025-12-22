@@ -4,39 +4,61 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY!;
-const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
-const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
-const OG_PRICE = String(process.env.BBOX_OG_PRICE || "5.0");
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
+const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS;
+const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT;
+const OG_PRICE_STR = process.env.BBOX_OG_PRICE || "5.0";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const supabase =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+      })
+    : null;
 
 type Body = { fid: number };
 
+function toAmountNumber(v: string): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 export async function POST(req: Request) {
+  const startedAt = Date.now();
+
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
     const fid = body?.fid;
 
     if (!fid || !Number.isFinite(fid)) {
-      return NextResponse.json({ error: "Missing fid" }, { status: 400 });
+      return NextResponse.json({ error: "Missing/invalid fid", details: { fid } }, { status: 400 });
     }
 
-    if (!NEYNAR_API_KEY || !RECEIVER_ADDRESS || !USDC_CONTRACT) {
+    const missingNeynar = {
+      NEYNAR_API_KEY: !NEYNAR_API_KEY,
+      NEYNAR_PAY_RECEIVER_ADDRESS: !RECEIVER_ADDRESS,
+      NEYNAR_USDC_CONTRACT: !USDC_CONTRACT,
+    };
+
+    if (
+      missingNeynar.NEYNAR_API_KEY ||
+      missingNeynar.NEYNAR_PAY_RECEIVER_ADDRESS ||
+      missingNeynar.NEYNAR_USDC_CONTRACT
+    ) {
       return NextResponse.json(
-        {
-          error: "Server misconfigured (Neynar env missing)",
-          missing: {
-            NEYNAR_API_KEY: !NEYNAR_API_KEY,
-            NEYNAR_PAY_RECEIVER_ADDRESS: !RECEIVER_ADDRESS,
-            NEYNAR_USDC_CONTRACT: !USDC_CONTRACT,
-          },
-        },
+        { error: "Server misconfigured (Neynar env missing)", missing: missingNeynar },
+        { status: 500 }
+      );
+    }
+
+    const amount = toAmountNumber(OG_PRICE_STR);
+    if (!amount) {
+      return NextResponse.json(
+        { error: "Invalid OG price env (must be positive number)", details: { OG_PRICE_STR } },
         { status: 500 }
       );
     }
@@ -45,9 +67,9 @@ export async function POST(req: Request) {
       transaction: {
         to: {
           network: "base",
-          address: RECEIVER_ADDRESS,
-          token_contract_address: USDC_CONTRACT,
-          amount: OG_PRICE,
+          address: RECEIVER_ADDRESS!,
+          token_contract_address: USDC_CONTRACT!,
+          amount, // ✅ NUMBER
         },
       },
       config: {
@@ -70,55 +92,101 @@ export async function POST(req: Request) {
       },
     };
 
-    const res = await fetch("https://api.neynar.com/v2/farcaster/frame/transaction/pay", {
+    const url = "https://api.neynar.com/v2/farcaster/frame/transaction/pay";
+
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         accept: "application/json",
         "content-type": "application/json",
-        "x-api-key": NEYNAR_API_KEY,
+        "x-api-key": NEYNAR_API_KEY!,
       },
       body: JSON.stringify(payload),
     });
 
     const rawText = await res.text().catch(() => "");
-    let data: any = null;
+    let parsed: any = null;
     try {
-      data = rawText ? JSON.parse(rawText) : null;
+      parsed = rawText ? JSON.parse(rawText) : null;
     } catch {
-      data = rawText;
+      parsed = rawText || null;
     }
+
+    const requestId =
+      res.headers.get("x-request-id") ||
+      res.headers.get("x-neynar-request-id") ||
+      res.headers.get("cf-ray") ||
+      null;
 
     if (!res.ok) {
-      console.error("Neynar OG pay error:", res.status, data);
+      console.error("[pay/og] Neynar pay error:", {
+        status: res.status,
+        requestId,
+        body: parsed,
+        ms: Date.now() - startedAt,
+      });
+
       return NextResponse.json(
-        { error: "Failed to create Neynar OG pay frame", neynarStatus: res.status, neynarBody: data },
-        { status: 500 }
+        {
+          error: "Failed to create Neynar OG pay frame",
+          neynarStatus: res.status,
+          neynarRequestId: requestId,
+          neynarBody: parsed,
+          details: {
+            fid,
+            amount,
+            receiver: RECEIVER_ADDRESS,
+            usdc: USDC_CONTRACT,
+            endpoint: url,
+          },
+        },
+        { status: 502 }
       );
     }
 
-    const frameUrl = data?.transaction_frame?.url as string | undefined;
-    const frameId = data?.transaction_frame?.id as string | undefined;
+    const frameUrl = parsed?.transaction_frame?.url as string | undefined;
+    const frameId = parsed?.transaction_frame?.id as string | undefined;
 
     if (!frameUrl || !frameId) {
+      console.error("[pay/og] Invalid Neynar response (missing url/id):", {
+        requestId,
+        body: parsed,
+      });
+
       return NextResponse.json(
-        { error: "Invalid Neynar response (missing frameUrl/frameId)", neynarBody: data },
-        { status: 500 }
+        {
+          error: "Invalid Neynar response (missing frameUrl/frameId)",
+          neynarRequestId: requestId,
+          neynarBody: parsed,
+        },
+        { status: 502 }
       );
     }
 
-    const { error: insertError } = await supabase.from("payments").insert({
-      fid,
-      kind: "og_rank",
-      pack_size: null,
-      frame_id: frameId,
-      status: "pending",
+    // best-effort payment record
+    if (supabase) {
+      const { error: insertError } = await supabase.from("payments").insert({
+        fid,
+        kind: "og_rank",
+        pack_size: null,
+        frame_id: frameId,
+        status: "pending",
+      });
+
+      if (insertError) console.error("[pay/og] Failed to insert OG payment record:", insertError);
+    }
+
+    return NextResponse.json({
+      frameUrl,
+      frameId,
+      neynarRequestId: requestId,
+      ms: Date.now() - startedAt,
     });
-
-    if (insertError) console.error("Failed to insert OG payment record:", insertError);
-
-    return NextResponse.json({ frameUrl, frameId });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in /api/pay/og:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error", details: String(error?.message ?? error) },
+      { status: 500 }
+    );
   }
 }
