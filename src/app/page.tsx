@@ -61,26 +61,21 @@ function buildPayDebugMessage(
 ): string {
   const base = data?.error ?? fallback;
 
-  // a backendnél gyakran így érdemes visszaadni: { error, neynarStatus, neynarBody, details }
   const neynarStatus = data?.neynarStatus ?? data?.status ?? null;
   const neynarBody = data?.neynarBody ?? data?.body ?? null;
   const details = data?.details ?? null;
 
   const parts: string[] = [];
-
-  // HTTP státusz a saját API-dtól (pl. 500)
   parts.push(`apiStatus: ${resStatus}`);
-
   if (neynarStatus) parts.push(`neynarStatus: ${neynarStatus}`);
 
-  // Body stringify (röviden)
   const formatObj = (obj: any) => {
     try {
       if (obj == null) return "";
-      if (typeof obj === "string") return obj.slice(0, 700);
-      return JSON.stringify(obj, null, 2).slice(0, 700);
+      if (typeof obj === "string") return obj.slice(0, 1200);
+      return JSON.stringify(obj, null, 2).slice(0, 1200);
     } catch {
-      return String(obj).slice(0, 700);
+      return String(obj).slice(0, 1200);
     }
   };
 
@@ -91,6 +86,14 @@ function buildPayDebugMessage(
   if (detailsStr) parts.push(`details: ${detailsStr}`);
 
   return `${base}\n\n[debug]\n${parts.join("\n")}`;
+}
+
+/**
+ * Neynar frame URL-t NE közvetlenül nyissuk meg (app.neynar.com),
+ * hanem Warpcast frame viewerben, különben "Loading..." lehet.
+ */
+function toWarpcastFrameViewerUrl(frameUrl: string): string {
+  return `https://warpcast.com/~/frame?url=${encodeURIComponent(frameUrl)}`;
 }
 
 export default function HomePage() {
@@ -156,7 +159,11 @@ export default function HomePage() {
         const context: any = await sdk.context;
 
         const ctxUser =
-          context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
+          context?.user ??
+          context?.viewer ??
+          context?.viewerContext?.user ??
+          null;
+
         const ctxFid: number | null =
           ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
@@ -293,9 +300,7 @@ export default function HomePage() {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
         setBuyLoading(false);
-        setBuyError(
-          "Payment not confirmed yet. Please try again in a moment."
-        );
+        setBuyError("Payment not confirmed yet. Please try again in a moment.");
         return;
       }
 
@@ -309,12 +314,14 @@ export default function HomePage() {
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          // confirmnál is logoljuk, hogy lássuk, mi van
           console.error("confirm error:", data);
           return;
         }
 
-        if (data.status === "completed" || data.status === "already_completed") {
+        if (
+          data.status === "completed" ||
+          data.status === "already_completed"
+        ) {
           clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
 
@@ -355,7 +362,13 @@ export default function HomePage() {
 
       if (!res.ok) {
         console.error("pay/extra error:", data);
-        setBuyError(buildPayDebugMessage("Failed to create Neynar pay frame", res.status, data));
+        setBuyError(
+          buildPayDebugMessage(
+            "Failed to create Neynar pay frame",
+            res.status,
+            data
+          )
+        );
         setBuyLoading(false);
         return;
       }
@@ -375,14 +388,18 @@ export default function HomePage() {
         return;
       }
 
-      await sdk.actions.openUrl(frameUrl);
+      // ✅ Warpcast frame viewerben nyitjuk (nem közvetlenül a Neynar URL-t)
+      const viewerUrl = toWarpcastFrameViewerUrl(frameUrl);
+      await sdk.actions.openUrl(viewerUrl);
 
       // Webhook nélkül: polling confirm
       await startConfirmPolling({ fid, frameId });
     } catch (err: any) {
       console.error("Error in handleBuyExtra:", err);
       setBuyError(
-        `Something went wrong, try again.\n\n[debug]\n${String(err?.message ?? err)}`
+        `Something went wrong, try again.\n\n[debug]\n${String(
+          err?.message ?? err
+        )}`
       );
       setBuyLoading(false);
     }
@@ -409,7 +426,13 @@ export default function HomePage() {
 
       if (!res.ok) {
         console.error("pay/og error:", data);
-        setBuyError(buildPayDebugMessage("Failed to create Neynar OG pay frame", res.status, data));
+        setBuyError(
+          buildPayDebugMessage(
+            "Failed to create Neynar OG pay frame",
+            res.status,
+            data
+          )
+        );
         setBuyLoading(false);
         return;
       }
@@ -429,12 +452,17 @@ export default function HomePage() {
         return;
       }
 
-      await sdk.actions.openUrl(frameUrl);
+      // ✅ Warpcast frame viewerben nyitjuk (nem közvetlenül a Neynar URL-t)
+      const viewerUrl = toWarpcastFrameViewerUrl(frameUrl);
+      await sdk.actions.openUrl(viewerUrl);
+
       await startConfirmPolling({ fid, frameId });
     } catch (err: any) {
       console.error("Error in handleBuyOg:", err);
       setBuyError(
-        `Something went wrong, try again.\n\n[debug]\n${String(err?.message ?? err)}`
+        `Something went wrong, try again.\n\n[debug]\n${String(
+          err?.message ?? err
+        )}`
       );
       setBuyLoading(false);
     }
@@ -465,9 +493,13 @@ export default function HomePage() {
           </span>
         );
       case "RARE":
-        return <span className={`${baseClass} border-rare text-rare`}>RARE</span>;
+        return (
+          <span className={`${baseClass} border-rare text-rare`}>RARE</span>
+        );
       case "EPIC":
-        return <span className={`${baseClass} border-epic text-epic`}>EPIC</span>;
+        return (
+          <span className={`${baseClass} border-epic text-epic`}>EPIC</span>
+        );
       case "LEGENDARY":
         return (
           <span className={`${baseClass} border-legendary text-legendary`}>
@@ -601,8 +633,9 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span>{" "}
-              or buy extra picks to keep opening today.
+              Wait until the timer hits{" "}
+              <span className="font-semibold">Ready</span> or buy extra picks to
+              keep opening today.
             </p>
           </div>
         )}
@@ -611,7 +644,9 @@ export default function HomePage() {
         <section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-medium">Pick your box</h2>
-            <span className="text-[11px] text-gray-400">One pick = one opening</span>
+            <span className="text-[11px] text-gray-400">
+              One pick = one opening
+            </span>
           </div>
 
           <div className="grid grid-cols-3 gap-3 mb-4">
@@ -655,7 +690,9 @@ export default function HomePage() {
 
           <button
             onClick={() =>
-              canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true)
+              canPick
+                ? handlePick(Math.floor(Math.random() * 3))
+                : setShowBuyModal(true)
             }
             disabled={picking}
             className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
@@ -698,7 +735,9 @@ export default function HomePage() {
               ✕
             </button>
             <div className="text-center mt-2">
-              <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
+              <div className="mb-3 flex justify-center">
+                {renderRarityBadge(lastResult.rarity)}
+              </div>
               <h3 className="text-sm font-semibold mb-2">
                 You opened a {renderRarityLabel(lastResult.rarity)}!
               </h3>
@@ -793,7 +832,6 @@ export default function HomePage() {
               </button>
             </div>
 
-            {/* 🔥 DEBUG-OLHATÓ hiba: több sorban, monospaced */}
             {buyError && (
               <div className="mt-3 text-[11px] text-red-300">
                 <pre className="whitespace-pre-wrap break-words text-center font-mono">
@@ -826,9 +864,12 @@ export default function HomePage() {
             </button>
 
             <div className="mt-1 mb-3">
-              <h3 className="text-sm font-semibold mb-1 text-center">Become OG</h3>
+              <h3 className="text-sm font-semibold mb-1 text-center">
+                Become OG
+              </h3>
               <p className="text-[11px] text-gray-400 text-center">
-                One-time purchase, FID-bound. OGs get a permanent daily buff and a unique badge in BBOX.
+                One-time purchase, FID-bound. OGs get a permanent daily buff and
+                a unique badge in BBOX.
               </p>
             </div>
 
@@ -847,7 +888,6 @@ export default function HomePage() {
               Maybe later
             </button>
 
-            {/* 🔥 ugyanaz a debug kiírás OG modalban is */}
             {buyError && (
               <div className="mt-3 text-[11px] text-red-300">
                 <pre className="whitespace-pre-wrap break-words text-center font-mono">
