@@ -4,25 +4,18 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-/**
- * ENV
- * (NE használj "!"-t itt, mert akkor nem tudunk normálisan debugolni hiányzó env-eket)
- */
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT;
 
-const PRICE_1 = String(process.env.BBOX_EXTRA_PRICE_1 || "0.5"); // 1 pick
-const PRICE_5 = String(process.env.BBOX_EXTRA_PRICE_5 || "2.0"); // 5 pick
-const PRICE_10 = String(process.env.BBOX_EXTRA_PRICE_10 || "3.5"); // 10 pick
+// env-ből jönnek, de NUMBER kell Neynar-nek
+const PRICE_1 = process.env.BBOX_EXTRA_PRICE_1 || "0.5"; // 1 pick
+const PRICE_5 = process.env.BBOX_EXTRA_PRICE_5 || "2.0"; // 5 pick
+const PRICE_10 = process.env.BBOX_EXTRA_PRICE_10 || "3.5"; // 10 pick
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-/**
- * Supabase admin client (service role)
- * Ha env hiányzik, nem crashelünk build-time, hanem a requestnél adunk értelmes hibát.
- */
 const supabase =
   SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
     ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -39,6 +32,13 @@ function isValidPackSize(x: any): x is 1 | 5 | 10 {
   return x === 1 || x === 5 || x === 10;
 }
 
+function toAmountNumber(v: string): number | null {
+  // "0.5" -> 0.5, "2.0" -> 2, stb.
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 export async function POST(req: Request) {
   const startedAt = Date.now();
 
@@ -47,72 +47,66 @@ export async function POST(req: Request) {
     const fid = body?.fid;
     const packSize = body?.packSize;
 
-    // ---- Input validation ----
     if (!fid || !Number.isFinite(fid) || !isValidPackSize(packSize)) {
       return NextResponse.json(
-        {
-          error: "Missing/invalid fid or packSize",
-          details: { fid, packSize },
-        },
+        { error: "Missing/invalid fid or packSize", details: { fid, packSize } },
         { status: 400 }
       );
     }
 
-    // ---- Env validation (Neynar) ----
     const missingNeynar = {
       NEYNAR_API_KEY: !NEYNAR_API_KEY,
       NEYNAR_PAY_RECEIVER_ADDRESS: !RECEIVER_ADDRESS,
       NEYNAR_USDC_CONTRACT: !USDC_CONTRACT,
     };
 
-    if (missingNeynar.NEYNAR_API_KEY || missingNeynar.NEYNAR_PAY_RECEIVER_ADDRESS || missingNeynar.NEYNAR_USDC_CONTRACT) {
+    if (
+      missingNeynar.NEYNAR_API_KEY ||
+      missingNeynar.NEYNAR_PAY_RECEIVER_ADDRESS ||
+      missingNeynar.NEYNAR_USDC_CONTRACT
+    ) {
+      return NextResponse.json(
+        { error: "Server misconfigured (Neynar env missing)", missing: missingNeynar },
+        { status: 500 }
+      );
+    }
+
+    let amountStr: string;
+    let lineItemName: string;
+
+    switch (packSize) {
+      case 1:
+        amountStr = PRICE_1;
+        lineItemName = "BBOX Extra Picks · 1";
+        break;
+      case 5:
+        amountStr = PRICE_5;
+        lineItemName = "BBOX Extra Picks · 5";
+        break;
+      case 10:
+        amountStr = PRICE_10;
+        lineItemName = "BBOX Extra Picks · 10";
+        break;
+    }
+
+    const amount = toAmountNumber(amountStr);
+    if (!amount) {
       return NextResponse.json(
         {
-          error: "Server misconfigured (Neynar env missing)",
-          missing: missingNeynar,
+          error: "Invalid price env (amount must be a positive number)",
+          details: { packSize, amountStr },
         },
         { status: 500 }
       );
     }
 
-    // ---- Env validation (Supabase) ----
-    const missingSupabase = {
-      NEXT_PUBLIC_SUPABASE_URL: !SUPABASE_URL,
-      SUPABASE_SERVICE_ROLE_KEY: !SUPABASE_SERVICE_ROLE_KEY,
-    };
-
-    // Nem kötelező a frame létrehozáshoz, de jó ha látod, mi hiányzik
-    if (!supabase) {
-      console.warn("[pay/extra] Supabase admin client not configured:", missingSupabase);
-    }
-
-    // ---- Amount & line item ----
-    let amount: string;
-    let lineItemName: string;
-
-    switch (packSize) {
-      case 1:
-        amount = PRICE_1;
-        lineItemName = "BBOX Extra Picks · 1";
-        break;
-      case 5:
-        amount = PRICE_5;
-        lineItemName = "BBOX Extra Picks · 5";
-        break;
-      case 10:
-        amount = PRICE_10;
-        lineItemName = "BBOX Extra Picks · 10";
-        break;
-    }
-
-    // ---- Neynar payload ----
     const payload = {
       transaction: {
         to: {
           network: "base",
           address: RECEIVER_ADDRESS!,
           token_contract_address: USDC_CONTRACT!,
-          amount, // string
+          amount, // ✅ NUMBER (nem string)
         },
       },
       config: {
@@ -120,7 +114,7 @@ export async function POST(req: Request) {
           {
             name: lineItemName,
             description: `Extra BBOX picks for FID ${fid}`,
-            image: `${BBOX_URL}/icon.png`, // stabil, ha a domain változik
+            image: "https://box-sage.vercel.app/icon.png",
           },
         ],
         action: {
@@ -136,7 +130,6 @@ export async function POST(req: Request) {
       },
     };
 
-    // ---- Call Neynar ----
     const url = "https://api.neynar.com/v2/farcaster/frame/transaction/pay";
 
     const res = await fetch(url, {
@@ -157,7 +150,6 @@ export async function POST(req: Request) {
       parsed = rawText || null;
     }
 
-    // Neynar request-id (ha van)
     const requestId =
       res.headers.get("x-request-id") ||
       res.headers.get("x-neynar-request-id") ||
@@ -178,7 +170,6 @@ export async function POST(req: Request) {
           neynarStatus: res.status,
           neynarRequestId: requestId,
           neynarBody: parsed,
-          // plusz: hogy lásd, mit küldtünk (csak a lényeg)
           details: {
             fid,
             packSize,
@@ -188,7 +179,6 @@ export async function POST(req: Request) {
             endpoint: url,
           },
         },
-        // 502: upstream (Neynar) hibára jobb jelzés, mint a 500
         { status: 502 }
       );
     }
@@ -212,7 +202,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---- Payment record (best effort) ----
+    // best-effort payment record
     if (supabase) {
       const { error: insertError } = await supabase.from("payments").insert({
         fid,
@@ -222,10 +212,7 @@ export async function POST(req: Request) {
         status: "pending",
       });
 
-      if (insertError) {
-        console.error("[pay/extra] Failed to insert payment record:", insertError);
-        // nem állítjuk meg a flow-t, attól még tudsz fizetni
-      }
+      if (insertError) console.error("[pay/extra] Failed to insert payment record:", insertError);
     }
 
     return NextResponse.json({
@@ -237,17 +224,8 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("Error in /api/pay/extra:", error);
     return NextResponse.json(
-      {
-        error: "Internal server error",
-        details: String(error?.message ?? error),
-      },
+      { error: "Internal server error", details: String(error?.message ?? error) },
       { status: 500 }
     );
   }
 }
-
-/**
- * kis helper: a BBOX_URL-t itt is használd (line_items image-hez)
- * (ha át akarod nevezni, nyugodtan)
- */
-const BBOX_URL = "https://box-sage.vercel.app";
