@@ -1,7 +1,7 @@
 // src/app/api/pay/og/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { encodeFunctionData, parseUnits } from "viem";
+import { isAddress, parseUnits } from "viem";
 
 export const runtime = "nodejs";
 
@@ -18,19 +18,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 type Body = { fid: number };
 
-const erc20Abi = [
-  {
-    type: "function",
-    name: "transfer",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "to", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "ok", type: "bool" }],
-  },
-] as const;
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
@@ -41,19 +28,18 @@ export async function POST(req: Request) {
     }
 
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
+      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
+    }
+
+    if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
       return NextResponse.json(
-        { error: "Server misconfigured (missing RECEIVER/USDC env)" },
+        { error: "Invalid RECEIVER/USDC address", details: { RECEIVER_ADDRESS, USDC_CONTRACT } },
         { status: 500 }
       );
     }
 
-    const amount = parseUnits(OG_PRICE, 6);
-
-    const data = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: "transfer",
-      args: [RECEIVER_ADDRESS as `0x${string}`, amount],
-    });
+    const amountUnits = parseUnits(OG_PRICE, 6).toString();
+    const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
@@ -63,25 +49,19 @@ export async function POST(req: Request) {
       status: "pending",
     });
 
-    if (insertError) console.error("Failed to insert OG payment record:", insertError);
+    if (insertError) console.error("payments insert OG error:", insertError);
 
     return NextResponse.json({
-      tx: {
-        chainId: 8453,
-        to: USDC_CONTRACT as `0x${string}`,
-        data: data as `0x${string}`,
-        value: "0x0",
-      },
-      details: {
-        fid,
-        amount: OG_PRICE,
-        receiver: RECEIVER_ADDRESS,
-        token: "USDC",
-        chainId: 8453,
-      },
+      token,
+      amount: amountUnits,
+      recipientAddress: RECEIVER_ADDRESS,
+      details: { priceHuman: OG_PRICE, decimals: 6, chainId: 8453 },
     });
-  } catch (error) {
-    console.error("Error in /api/pay/og:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (e: any) {
+    console.error("Error in /api/pay/og:", e);
+    return NextResponse.json(
+      { error: "Internal server error", details: String(e?.message ?? e) },
+      { status: 500 }
+    );
   }
 }
