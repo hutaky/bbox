@@ -1,12 +1,7 @@
 // src/app/api/pay/settle/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import {
-  createPublicClient,
-  decodeFunctionData,
-  http,
-  isAddress,
-} from "viem";
+import { createPublicClient, decodeFunctionData, http, isAddress } from "viem";
 import { base } from "viem/chains";
 
 export const runtime = "nodejs";
@@ -41,33 +36,20 @@ const erc20Abi = [
 ] as const;
 
 type Body =
-  | {
-      fid: number;
-      kind: "extra_picks";
-      packSize: 1 | 5 | 10;
-      txHash: `0x${string}`;
-      sdkPath?: string;
-    }
-  | {
-      fid: number;
-      kind: "og_rank";
-      txHash: `0x${string}`;
-      sdkPath?: string;
-    };
+  | { fid: number; kind: "extra_picks"; packSize: 1 | 5 | 10; txHash: `0x${string}` }
+  | { fid: number; kind: "og_rank"; txHash: `0x${string}` };
+
+function toUnits6(s: string): bigint {
+  const [a, b = ""] = s.split(".");
+  const frac = (b + "000000").slice(0, 6);
+  return BigInt(a) * 1000000n + BigInt(frac);
+}
 
 function expectedAmount(kind: Body["kind"], packSize?: 1 | 5 | 10): bigint {
-  // USDC 6 dec
-  const toUnits = (s: string) => {
-    const [a, b = ""] = s.split(".");
-    const frac = (b + "000000").slice(0, 6);
-    return BigInt(a) * 1000000n + BigInt(frac);
-  };
-
-  if (kind === "og_rank") return toUnits(OG_PRICE);
-
-  if (packSize === 1) return toUnits(PRICE_1);
-  if (packSize === 5) return toUnits(PRICE_5);
-  if (packSize === 10) return toUnits(PRICE_10);
+  if (kind === "og_rank") return toUnits6(OG_PRICE);
+  if (packSize === 1) return toUnits6(PRICE_1);
+  if (packSize === 5) return toUnits6(PRICE_5);
+  if (packSize === 10) return toUnits6(PRICE_10);
   throw new Error("Invalid packSize");
 }
 
@@ -76,7 +58,7 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => null)) as Body | null;
 
     const fid = (body as any)?.fid;
-    const kind = (body as any)?.kind;
+    const kind = (body as any)?.kind as Body["kind"] | undefined;
     const txHash = (body as any)?.txHash as `0x${string}` | undefined;
     const packSize = (body as any)?.packSize as 1 | 5 | 10 | undefined;
 
@@ -97,27 +79,24 @@ export async function POST(req: Request) {
       transport: http(RPC_URL),
     });
 
-    const tx = await client.getTransaction({ hash: txHash });
+    // Tx + receipt
+    const tx = await client.getTransaction({ hash: txHash }).catch(() => null);
     if (!tx) {
-      return NextResponse.json({ error: "Transaction not found yet", hint: "Try again in a few seconds." }, { status: 400 });
-    }
-
-    // USDC contract call kell legyen
-    if ((tx.to || "").toLowerCase() !== USDC_CONTRACT.toLowerCase()) {
       return NextResponse.json(
-        {
-          error: "Wrong contract",
-          details: { expectedTo: USDC_CONTRACT, actualTo: tx.to },
-        },
+        { error: "Transaction not found yet", hint: "Wait 3-10 seconds, then try again." },
         { status: 400 }
       );
     }
 
-    const decoded = decodeFunctionData({
-      abi: erc20Abi,
-      data: tx.input,
-    });
+    // USDC contract call expected
+    if ((tx.to || "").toLowerCase() !== USDC_CONTRACT.toLowerCase()) {
+      return NextResponse.json(
+        { error: "Wrong contract", details: { expectedTo: USDC_CONTRACT, actualTo: tx.to } },
+        { status: 400 }
+      );
+    }
 
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: tx.input });
     if (decoded.functionName !== "transfer") {
       return NextResponse.json({ error: "Not an ERC20 transfer" }, { status: 400 });
     }
@@ -126,10 +105,7 @@ export async function POST(req: Request) {
 
     if (to.toLowerCase() !== RECEIVER_ADDRESS.toLowerCase()) {
       return NextResponse.json(
-        {
-          error: "Wrong receiver",
-          details: { expectedReceiver: RECEIVER_ADDRESS, actualReceiver: to },
-        },
+        { error: "Wrong receiver", details: { expectedReceiver: RECEIVER_ADDRESS, actualReceiver: to } },
         { status: 400 }
       );
     }
@@ -137,24 +113,20 @@ export async function POST(req: Request) {
     const exp = expectedAmount(kind, packSize);
     if (amount !== exp) {
       return NextResponse.json(
-        {
-          error: "Wrong amount",
-          details: { expected: exp.toString(), actual: amount.toString(), kind, packSize },
-        },
+        { error: "Wrong amount", details: { expected: exp.toString(), actual: amount.toString(), kind, packSize } },
         { status: 400 }
       );
     }
 
-    // receipt -> sikeresség
-    const receipt = await client.getTransactionReceipt({ hash: txHash });
+    const receipt = await client.getTransactionReceipt({ hash: txHash }).catch(() => null);
     if (!receipt || receipt.status !== "success") {
       return NextResponse.json(
-        { error: "Transaction not successful yet", details: { status: receipt?.status ?? "missing" } },
+        { error: "Transaction not successful yet", hint: "Wait 3-10 seconds, then try again.", details: { status: receipt?.status ?? "missing" } },
         { status: 400 }
       );
     }
 
-    // --- jóváírás DB-ben ---
+    // --- DB credit ---
     if (kind === "extra_picks") {
       const add = packSize ?? 0;
 
@@ -190,11 +162,7 @@ export async function POST(req: Request) {
     }
 
     if (kind === "og_rank") {
-      const { error: uErr } = await supabase
-        .from("users")
-        .update({ is_og: true })
-        .eq("fid", fid);
-
+      const { error: uErr } = await supabase.from("users").update({ is_og: true }).eq("fid", fid);
       if (uErr) return NextResponse.json({ error: "Failed to set OG", details: uErr }, { status: 500 });
 
       await supabase
