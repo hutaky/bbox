@@ -1,7 +1,6 @@
 // src/app/layout.tsx
 import "../styles/globals.css";
 import type { ReactNode } from "react";
-import Providers from "./providers";
 
 export const metadata = {
   title: "BBOX | Daily Based Box Game",
@@ -10,10 +9,14 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-black text-white">
-        <Providers>{children}</Providers>
-      </body>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+      </head>
+      <body className="min-h-screen bg-black text-white">{children}</body>
     </html>
   );
 }
