@@ -6,7 +6,7 @@ import Link from "next/link";
 import sdk from "@farcaster/frame-sdk";
 import type { ApiUserState } from "@/types";
 
-const BBOX_URL = "https://box-sage.vercel.app";
+const BBOX_URL = "https://box-sage.vercel.app"; // a saját deploy URL-ed
 
 type BoxRarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
 
@@ -49,17 +49,80 @@ function getLeagueFromPoints(points: number): string {
   return "Bronze League";
 }
 
-function buildPayDebugMessage(fallback: string, resStatus: number, data: any): string {
+function buildPayDebugMessage(fallback: string, data: any): string {
   const base = data?.error ?? fallback;
   const parts: string[] = [];
-  parts.push(`apiStatus: ${resStatus}`);
-  if (data?.message) parts.push(`message: ${String(data.message).slice(0, 400)}`);
+
+  if (data?.hint) parts.push(`hint: ${data.hint}`);
   if (data?.details) {
     try {
-      parts.push(`details: ${JSON.stringify(data.details, null, 2).slice(0, 700)}`);
-    } catch {}
+      parts.push(`details: ${JSON.stringify(data.details, null, 2)}`);
+    } catch {
+      parts.push(`details: ${String(data.details)}`);
+    }
   }
-  return `${base}\n\n[debug]\n${parts.join("\n")}`;
+
+  if (data?.sdkDebug) parts.push(`sdkDebug: ${data.sdkDebug}`);
+
+  return `${base}\n\n[debug]\n${parts.join("\n")}`.trim();
+}
+
+/**
+ * Native tx küldés: több SDK-féle felületet megpróbálunk.
+ * - sdk.actions.sendTransaction (ha létezik)
+ * - sdk.wallet.sendTransaction (ha létezik)
+ * - sdk.wallet.request({ method: "eth_sendTransaction" ... }) (ha létezik)
+ */
+async function sendTransactionAny(tx: {
+  chainId: number; // 8453
+  to: `0x${string}`;
+  data: `0x${string}`;
+  value?: `0x${string}`; // 0x0
+}): Promise<{ txHash: string; sdkPath: string }> {
+  const anySdk: any = sdk as any;
+
+  // 1) actions.sendTransaction
+  if (anySdk?.actions?.sendTransaction) {
+    const res = await anySdk.actions.sendTransaction(tx);
+    // egyes SDK-k stringet adnak, mások { hash }
+    const hash =
+      typeof res === "string" ? res : res?.hash ?? res?.transactionHash ?? null;
+    if (!hash) throw new Error("sendTransaction returned no hash");
+    return { txHash: hash, sdkPath: "actions.sendTransaction" };
+  }
+
+  // 2) wallet.sendTransaction
+  if (anySdk?.wallet?.sendTransaction) {
+    const res = await anySdk.wallet.sendTransaction(tx);
+    const hash =
+      typeof res === "string" ? res : res?.hash ?? res?.transactionHash ?? null;
+    if (!hash) throw new Error("wallet.sendTransaction returned no hash");
+    return { txHash: hash, sdkPath: "wallet.sendTransaction" };
+  }
+
+  // 3) wallet.request (EIP-1193)
+  if (anySdk?.wallet?.request) {
+    const params = [
+      {
+        chainId: `0x${tx.chainId.toString(16)}`,
+        to: tx.to,
+        data: tx.data,
+        value: tx.value ?? "0x0",
+      },
+    ];
+    const hash = await anySdk.wallet.request({
+      method: "eth_sendTransaction",
+      params,
+    });
+    if (!hash || typeof hash !== "string") {
+      throw new Error("wallet.request eth_sendTransaction returned invalid hash");
+    }
+    return { txHash: hash, sdkPath: "wallet.request(eth_sendTransaction)" };
+  }
+
+  throw new Error(
+    "No supported sendTransaction method found on SDK. Update @farcaster/frame-sdk or switch to the Mini App SDK."
+  );
 }
 
 export default function HomePage() {
@@ -79,7 +142,10 @@ export default function HomePage() {
 
   const pollTimerRef = useRef<any>(null);
 
-  async function loadUserState(currentFid: number | null, profile?: { username?: string | null; pfpUrl?: string | null }) {
+  async function loadUserState(
+    currentFid: number | null,
+    profile?: { username?: string | null; pfpUrl?: string | null }
+  ) {
     if (!currentFid) return;
     try {
       const res = await fetch("/api/me", {
@@ -117,12 +183,21 @@ export default function HomePage() {
       try {
         const context: any = await sdk.context;
 
-        const ctxUser = context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
-        const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
+        const ctxUser =
+          context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
+
+        const ctxFid: number | null =
+          ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
-          username: ctxUser?.username ?? ctxUser?.displayName ?? ctxUser?.display_name ?? ctxUser?.name ?? null,
-          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
+          username:
+            ctxUser?.username ??
+            ctxUser?.displayName ??
+            ctxUser?.display_name ??
+            ctxUser?.name ??
+            null,
+          pfpUrl:
+            ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
         };
 
         const queryFid = getFidFromQuery();
@@ -164,7 +239,9 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
-  const canPick = (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+  const canPick =
+    (user?.freePicksRemaining ?? 0) > 0 ||
+    (user?.extraPicksRemaining ?? 0) > 0;
 
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
@@ -200,7 +277,11 @@ export default function HomePage() {
       };
 
       setUser(updated);
-      setLastResult({ rarity: data.rarity, points: data.points, openedAt: new Date().toISOString() });
+      setLastResult({
+        rarity: data.rarity,
+        points: data.points,
+        openedAt: new Date().toISOString(),
+      });
       setShowResultModal(true);
     } catch (err) {
       console.error("Pick failed:", err);
@@ -217,7 +298,9 @@ export default function HomePage() {
     const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
     const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
 
-    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(fullText)}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
+    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
+      fullText
+    )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
 
     try {
       await sdk.actions.openUrl(composeUrl);
@@ -227,63 +310,7 @@ export default function HomePage() {
     }
   }
 
-  async function startOnchainConfirmPolling(params: { fid: number; kind: "extra_picks" | "og_rank"; txHash: string; packSize?: 1 | 5 | 10 }) {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-
-    let tries = 0;
-    pollTimerRef.current = setInterval(async () => {
-      tries += 1;
-      if (tries > 90) {
-        clearInterval(pollTimerRef.current);
-        pollTimerRef.current = null;
-        setBuyLoading(false);
-        setBuyError("Payment not confirmed yet. If you already confirmed in wallet, wait a bit and reopen the app.");
-        return;
-      }
-
-      try {
-        const res = await fetch("/api/tx/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fid: params.fid,
-            kind: params.kind,
-            txHash: params.txHash,
-            ...(params.kind === "extra_picks" ? { packSize: params.packSize } : {}),
-          }),
-          cache: "no-store",
-        });
-
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          console.error("tx/confirm error:", data);
-          return;
-        }
-
-        if (data.status === "completed") {
-          clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
-
-          await loadUserState(params.fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
-
-          setBuyLoading(false);
-          setBuyError(null);
-          setShowBuyModal(false);
-          setShowOgModal(false);
-        } else if (data.status === "failed" || data.status === "invalid") {
-          clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
-          setBuyLoading(false);
-          setBuyError(`Transaction ${data.status}. ${data.reason ?? ""}`.trim());
-        }
-      } catch (e) {
-        console.error("confirm polling exception:", e);
-      }
-    }, 2000);
-  }
-
-  // ✅ Native TX: extra picks
+  // --- Native TX flow: extra picks ---
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -294,7 +321,8 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
-      const res = await fetch("/api/tx/extra", {
+      // backend csak tx paramétert ad vissza + expected info
+      const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fid, packSize }),
@@ -302,49 +330,72 @@ export default function HomePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setBuyError(buildPayDebugMessage("Failed to prepare transaction", res.status, data));
+        setBuyError(buildPayDebugMessage("Failed to prepare transaction", data));
         setBuyLoading(false);
         return;
       }
 
       const tx = data?.tx;
-      if (!tx?.to || !tx?.data || !tx?.chainId) {
-        setBuyError("Invalid tx payload from server.");
+      if (!tx?.chainId || !tx?.to || !tx?.data) {
+        setBuyError(buildPayDebugMessage("Invalid tx payload from server", data));
         setBuyLoading(false);
         return;
       }
 
-      // 🔥 THIS is the native sheet in Farcaster
-      const sendRes: any = await (sdk as any).actions.sendTransaction({
-        chainId: tx.chainId,
-        to: tx.to,
-        data: tx.data,
-        value: tx.value ?? "0x0",
+      // native confirm (ha a kliens támogatja)
+      let txHash = "";
+      let sdkPath = "";
+      try {
+        const sent = await sendTransactionAny(tx);
+        txHash = sent.txHash;
+        sdkPath = sent.sdkPath;
+      } catch (e: any) {
+        setBuyError(
+          buildPayDebugMessage("Transaction error.", {
+            error: "Transaction error.",
+            sdkDebug: String(e?.message ?? e),
+          })
+        );
+        setBuyLoading(false);
+        return;
+      }
+
+      // settle: txHash alapján jóváírás
+      const settleRes = await fetch("/api/pay/settle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fid,
+          kind: "extra_picks",
+          packSize,
+          txHash,
+          sdkPath,
+        }),
+        cache: "no-store",
       });
 
-      const txHash =
-        sendRes?.hash ||
-        sendRes?.transactionHash ||
-        sendRes?.txHash ||
-        sendRes?.result?.hash ||
-        null;
-
-      if (!txHash) {
-        setBuyError("Could not read tx hash from sendTransaction response.");
+      const settleData = await settleRes.json().catch(() => ({}));
+      if (!settleRes.ok) {
+        setBuyError(buildPayDebugMessage("Payment sent, but verification failed.", settleData));
         setBuyLoading(false);
         return;
       }
 
-      // Webhook nélkül: onchain polling confirm
-      await startOnchainConfirmPolling({ fid, kind: "extra_picks", packSize, txHash });
+      await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+
+      setBuyLoading(false);
+      setBuyError(null);
+      setShowBuyModal(false);
     } catch (err: any) {
-      console.error("Error in handleBuyExtra:", err);
-      setBuyError(`Transaction error.\n\n[debug]\n${String(err?.message ?? err)}`);
+      console.error("handleBuyExtra error:", err);
+      setBuyError(
+        buildPayDebugMessage("Something went wrong.", { error: String(err?.message ?? err) })
+      );
       setBuyLoading(false);
     }
   }
 
-  // ✅ Native TX: OG
+  // --- Native TX flow: OG ---
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -355,7 +406,7 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
-      const res = await fetch("/api/tx/og", {
+      const res = await fetch("/api/pay/og", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fid }),
@@ -363,42 +414,62 @@ export default function HomePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setBuyError(buildPayDebugMessage("Failed to prepare transaction", res.status, data));
+        setBuyError(buildPayDebugMessage("Failed to prepare OG transaction", data));
         setBuyLoading(false);
         return;
       }
 
       const tx = data?.tx;
-      if (!tx?.to || !tx?.data || !tx?.chainId) {
-        setBuyError("Invalid tx payload from server.");
+      if (!tx?.chainId || !tx?.to || !tx?.data) {
+        setBuyError(buildPayDebugMessage("Invalid tx payload from server", data));
         setBuyLoading(false);
         return;
       }
 
-      const sendRes: any = await (sdk as any).actions.sendTransaction({
-        chainId: tx.chainId,
-        to: tx.to,
-        data: tx.data,
-        value: tx.value ?? "0x0",
+      let txHash = "";
+      let sdkPath = "";
+      try {
+        const sent = await sendTransactionAny(tx);
+        txHash = sent.txHash;
+        sdkPath = sent.sdkPath;
+      } catch (e: any) {
+        setBuyError(
+          buildPayDebugMessage("Transaction error.", {
+            error: "Transaction error.",
+            sdkDebug: String(e?.message ?? e),
+          })
+        );
+        setBuyLoading(false);
+        return;
+      }
+
+      const settleRes = await fetch("/api/pay/settle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fid,
+          kind: "og_rank",
+          txHash,
+          sdkPath,
+        }),
+        cache: "no-store",
       });
 
-      const txHash =
-        sendRes?.hash ||
-        sendRes?.transactionHash ||
-        sendRes?.txHash ||
-        sendRes?.result?.hash ||
-        null;
-
-      if (!txHash) {
-        setBuyError("Could not read tx hash from sendTransaction response.");
+      const settleData = await settleRes.json().catch(() => ({}));
+      if (!settleRes.ok) {
+        setBuyError(buildPayDebugMessage("Payment sent, but verification failed.", settleData));
         setBuyLoading(false);
         return;
       }
 
-      await startOnchainConfirmPolling({ fid, kind: "og_rank", txHash });
+      await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+
+      setBuyLoading(false);
+      setBuyError(null);
+      setShowOgModal(false);
     } catch (err: any) {
-      console.error("Error in handleBuyOg:", err);
-      setBuyError(`Transaction error.\n\n[debug]\n${String(err?.message ?? err)}`);
+      console.error("handleBuyOg error:", err);
+      setBuyError(buildPayDebugMessage("Something went wrong.", { error: String(err?.message ?? err) }));
       setBuyLoading(false);
     }
   }
@@ -434,7 +505,13 @@ export default function HomePage() {
 
   const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-  const rankLabel = user?.isOg ? (user?.isPro ? "BOX PRO OG" : "BOX OG") : user?.isPro ? "BOX PRO" : "BOX Based";
+  const rankLabel = user?.isOg
+    ? user?.isPro
+      ? "BOX PRO OG"
+      : "BOX OG"
+    : user?.isPro
+    ? "BOX PRO"
+    : "BOX Based";
 
   if (loading) {
     return (
@@ -532,8 +609,15 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* BOX GRID + NAV ... (változatlan) */}
-        {/* ... itt hagytam a te verziódat: ugyanaz maradhat ... */}
+        {/* INFO / NO PICKS MESSAGE */}
+        {!canPick && (
+          <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
+            <div className="font-semibold mb-1">No boxes left to open</div>
+            <p className="text-[11px]">
+              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
+            </p>
+          </div>
+        )}
 
         {/* BOX GRID */}
         <section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
@@ -589,6 +673,7 @@ export default function HomePage() {
           </button>
         </section>
 
+        {/* NAV BUTTONS */}
         <section className="flex gap-2">
           <Link
             href="/leaderboard"
@@ -623,7 +708,10 @@ export default function HomePage() {
               >
                 Share on Farcaster
               </button>
-              <button onClick={() => setShowResultModal(false)} className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900">
+              <button
+                onClick={() => setShowResultModal(false)}
+                className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
+              >
                 Close
               </button>
             </div>
@@ -697,7 +785,9 @@ export default function HomePage() {
               </div>
             )}
 
-            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for wallet confirmation…</p>}
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
+            )}
           </div>
         </div>
       )}
@@ -718,7 +808,9 @@ export default function HomePage() {
 
             <div className="mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1 text-center">Become OG</h3>
-              <p className="text-[11px] text-gray-400 text-center">One-time purchase, FID-bound. Native wallet confirm.</p>
+              <p className="text-[11px] text-gray-400 text-center">
+                One-time purchase, FID-bound. OGs get a permanent daily buff and a unique badge in BBOX.
+              </p>
             </div>
 
             <button
@@ -729,7 +821,10 @@ export default function HomePage() {
               Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
             </button>
 
-            <button onClick={() => setShowOgModal(false)} className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900">
+            <button
+              onClick={() => setShowOgModal(false)}
+              className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
+            >
               Maybe later
             </button>
 
@@ -739,7 +834,9 @@ export default function HomePage() {
               </div>
             )}
 
-            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for wallet confirmation…</p>}
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
+            )}
           </div>
         </div>
       )}
