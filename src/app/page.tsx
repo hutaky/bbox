@@ -134,8 +134,7 @@ export default function HomePage() {
           context?.frameData?.user ??
           null;
 
-        const ctxFid: number | null =
-          ctxUser?.fid ?? context?.frameData?.fid ?? null;
+        const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
           username:
@@ -144,11 +143,7 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl:
-            ctxUser?.pfpUrl ??
-            ctxUser?.pfp_url ??
-            ctxUser?.pfp?.url ??
-            null,
+          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
         };
 
         const queryFid = getFidFromQuery();
@@ -191,8 +186,7 @@ export default function HomePage() {
   }, [user?.nextFreePickAt]);
 
   const canPick =
-    (user?.freePicksRemaining ?? 0) > 0 ||
-    (user?.extraPicksRemaining ?? 0) > 0;
+    (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
 
   // ---- Pick ----
   async function handlePick(boxIndex: number) {
@@ -321,10 +315,11 @@ export default function HomePage() {
       });
 
       if (!result?.success) {
+        const r: any = result;
         setBuyError(
           buildPayDebugMessage("Transaction cancelled or failed.", {
             error: "Transaction cancelled or failed.",
-            sdkDebug: `${result?.reason ?? "unknown"} ${result?.error?.message ?? ""}`.trim(),
+            sdkDebug: `${r?.reason ?? ""} ${r?.error?.message ?? r?.message ?? ""}`.trim() || "unknown",
             details: result,
           })
         );
@@ -419,10 +414,11 @@ export default function HomePage() {
       });
 
       if (!result?.success) {
+        const r: any = result;
         setBuyError(
           buildPayDebugMessage("Transaction cancelled or failed.", {
             error: "Transaction cancelled or failed.",
-            sdkDebug: `${result?.reason ?? "unknown"} ${result?.error?.message ?? ""}`.trim(),
+            sdkDebug: `${r?.reason ?? ""} ${r?.error?.message ?? r?.message ?? ""}`.trim() || "unknown",
             details: result,
           })
         );
@@ -554,7 +550,7 @@ export default function HomePage() {
             )}
             <div className="text-right">
               <div className="text-sm font-medium truncate max-w-[120px]">{displayName}</div>
-              <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
+              <div className="text-[11px] text-[#F4F0FF]/80`}>{rankLabel}</div>
             </div>
           </div>
         </header>
