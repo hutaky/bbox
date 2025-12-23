@@ -3,10 +3,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import sdk from "@farcaster/frame-sdk";
+import { sdk } from "@farcaster/miniapp-sdk";
 import type { ApiUserState } from "@/types";
 
-const BBOX_URL = "https://box-sage.vercel.app"; // a saját deploy URL-ed
+const BBOX_URL = "https://box-sage.vercel.app";
 
 type BoxRarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
 
@@ -52,7 +52,6 @@ function getLeagueFromPoints(points: number): string {
 function buildPayDebugMessage(fallback: string, data: any): string {
   const base = data?.error ?? fallback;
   const parts: string[] = [];
-
   if (data?.hint) parts.push(`hint: ${data.hint}`);
   if (data?.details) {
     try {
@@ -61,68 +60,8 @@ function buildPayDebugMessage(fallback: string, data: any): string {
       parts.push(`details: ${String(data.details)}`);
     }
   }
-
   if (data?.sdkDebug) parts.push(`sdkDebug: ${data.sdkDebug}`);
-
   return `${base}\n\n[debug]\n${parts.join("\n")}`.trim();
-}
-
-/**
- * Native tx küldés: több SDK-féle felületet megpróbálunk.
- * - sdk.actions.sendTransaction (ha létezik)
- * - sdk.wallet.sendTransaction (ha létezik)
- * - sdk.wallet.request({ method: "eth_sendTransaction" ... }) (ha létezik)
- */
-async function sendTransactionAny(tx: {
-  chainId: number; // 8453
-  to: `0x${string}`;
-  data: `0x${string}`;
-  value?: `0x${string}`; // 0x0
-}): Promise<{ txHash: string; sdkPath: string }> {
-  const anySdk: any = sdk as any;
-
-  // 1) actions.sendTransaction
-  if (anySdk?.actions?.sendTransaction) {
-    const res = await anySdk.actions.sendTransaction(tx);
-    // egyes SDK-k stringet adnak, mások { hash }
-    const hash =
-      typeof res === "string" ? res : res?.hash ?? res?.transactionHash ?? null;
-    if (!hash) throw new Error("sendTransaction returned no hash");
-    return { txHash: hash, sdkPath: "actions.sendTransaction" };
-  }
-
-  // 2) wallet.sendTransaction
-  if (anySdk?.wallet?.sendTransaction) {
-    const res = await anySdk.wallet.sendTransaction(tx);
-    const hash =
-      typeof res === "string" ? res : res?.hash ?? res?.transactionHash ?? null;
-    if (!hash) throw new Error("wallet.sendTransaction returned no hash");
-    return { txHash: hash, sdkPath: "wallet.sendTransaction" };
-  }
-
-  // 3) wallet.request (EIP-1193)
-  if (anySdk?.wallet?.request) {
-    const params = [
-      {
-        chainId: `0x${tx.chainId.toString(16)}`,
-        to: tx.to,
-        data: tx.data,
-        value: tx.value ?? "0x0",
-      },
-    ];
-    const hash = await anySdk.wallet.request({
-      method: "eth_sendTransaction",
-      params,
-    });
-    if (!hash || typeof hash !== "string") {
-      throw new Error("wallet.request eth_sendTransaction returned invalid hash");
-    }
-    return { txHash: hash, sdkPath: "wallet.request(eth_sendTransaction)" };
-  }
-
-  throw new Error(
-    "No supported sendTransaction method found on SDK. Update @farcaster/frame-sdk or switch to the Mini App SDK."
-  );
 }
 
 export default function HomePage() {
@@ -140,7 +79,7 @@ export default function HomePage() {
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
 
-  const pollTimerRef = useRef<any>(null);
+  const mountedRef = useRef(true);
 
   async function loadUserState(
     currentFid: number | null,
@@ -159,6 +98,8 @@ export default function HomePage() {
       });
 
       const data = await res.json();
+      if (!mountedRef.current) return;
+
       setUser(data);
 
       if (data?.nextFreePickAt) setCountdown(formatCountdown(data.nextFreePickAt));
@@ -170,21 +111,28 @@ export default function HomePage() {
     }
   }
 
+  // ---- Mini App init ----
   useEffect(() => {
+    mountedRef.current = true;
     let cancelled = false;
 
     async function init() {
       try {
         await sdk.actions.ready();
       } catch (e) {
-        console.warn("sdk.actions.ready() failed on main page:", e);
+        console.warn("sdk.actions.ready() failed:", e);
       }
 
       try {
-        const context: any = await sdk.context;
+        // Mini App SDK context (különböző hostokban változhat a shape)
+        const context: any = await (sdk as any).context;
 
         const ctxUser =
-          context?.user ?? context?.viewer ?? context?.viewerContext?.user ?? null;
+          context?.user ??
+          context?.viewer ??
+          context?.viewerContext?.user ??
+          context?.frameData?.user ??
+          null;
 
         const ctxFid: number | null =
           ctxUser?.fid ?? context?.frameData?.fid ?? null;
@@ -197,7 +145,10 @@ export default function HomePage() {
             ctxUser?.name ??
             null,
           pfpUrl:
-            ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
+            ctxUser?.pfpUrl ??
+            ctxUser?.pfp_url ??
+            ctxUser?.pfp?.url ??
+            null,
         };
 
         const queryFid = getFidFromQuery();
@@ -208,7 +159,7 @@ export default function HomePage() {
           await loadUserState(finalFid, profile);
         }
       } catch (e) {
-        console.error("Error initializing mini app SDK (context):", e);
+        console.error("Error reading sdk.context:", e);
         const queryFid = getFidFromQuery();
         if (!cancelled) {
           setFid(queryFid);
@@ -219,15 +170,15 @@ export default function HomePage() {
       }
     }
 
-    if (typeof window !== "undefined") void init();
-    else setLoading(false);
+    void init();
 
     return () => {
       cancelled = true;
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      mountedRef.current = false;
     };
   }, []);
 
+  // ---- Countdown ----
   useEffect(() => {
     if (!user?.nextFreePickAt) {
       setCountdown("Ready");
@@ -243,6 +194,7 @@ export default function HomePage() {
     (user?.freePicksRemaining ?? 0) > 0 ||
     (user?.extraPicksRemaining ?? 0) > 0;
 
+  // ---- Pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
     if (!canPick) return;
@@ -291,12 +243,12 @@ export default function HomePage() {
     }
   }
 
+  // ---- Share ----
   async function handleShareResult() {
-    if (!lastResult || !user) return;
+    if (!lastResult) return;
 
     const rarityLabel = lastResult.rarity.toLowerCase();
-    const text = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁`;
-    const fullText = `${text}\n\nPlay BBOX here: ${BBOX_URL}`;
+    const fullText = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁\n\nPlay BBOX here: ${BBOX_URL}`;
 
     const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
       fullText
@@ -310,7 +262,13 @@ export default function HomePage() {
     }
   }
 
-  // --- Native TX flow: extra picks ---
+  /**
+   * NATÍV fizetés Mini App SDK-val:
+   * - backend visszaadja: token (CAIP-19), amount (base units), recipientAddress
+   * - itt meghívjuk: sdk.actions.sendToken(...)
+   * - visszakapjuk: tx hash (send.transaction)
+   * - majd /api/pay/settle validál + jóváír
+   */
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -321,7 +279,6 @@ export default function HomePage() {
       setBuyLoading(true);
       setBuyError(null);
 
-      // backend csak tx paramétert ad vissza + expected info
       const res = await fetch("/api/pay/extra", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -330,37 +287,53 @@ export default function HomePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setBuyError(buildPayDebugMessage("Failed to prepare transaction", data));
+        setBuyError(buildPayDebugMessage("Failed to prepare payment.", data));
         setBuyLoading(false);
         return;
       }
 
-      const tx = data?.tx;
-      if (!tx?.chainId || !tx?.to || !tx?.data) {
-        setBuyError(buildPayDebugMessage("Invalid tx payload from server", data));
-        setBuyLoading(false);
-        return;
-      }
-
-      // native confirm (ha a kliens támogatja)
-      let txHash = "";
-      let sdkPath = "";
-      try {
-        const sent = await sendTransactionAny(tx);
-        txHash = sent.txHash;
-        sdkPath = sent.sdkPath;
-      } catch (e: any) {
+      // Kompatibilitás: ha még tx-t küld a backend, adjunk értelmes hibát
+      if (data?.tx && !data?.token) {
         setBuyError(
-          buildPayDebugMessage("Transaction error.", {
-            error: "Transaction error.",
-            sdkDebug: String(e?.message ?? e),
+          buildPayDebugMessage(
+            "Backend still returns tx payload. Update /api/pay/* to return { token, amount, recipientAddress } for sendToken.",
+            data
+          )
+        );
+        setBuyLoading(false);
+        return;
+      }
+
+      const token = data?.token as string | undefined;
+      const amount = data?.amount as string | undefined;
+      const recipientAddress = data?.recipientAddress as string | undefined;
+
+      if (!token || !amount || !recipientAddress) {
+        setBuyError(buildPayDebugMessage("Invalid payment payload from server.", data));
+        setBuyLoading(false);
+        return;
+      }
+
+      const result = await sdk.actions.sendToken({
+        token,
+        amount,
+        recipientAddress,
+      });
+
+      if (!result?.success) {
+        setBuyError(
+          buildPayDebugMessage("Transaction cancelled or failed.", {
+            error: "Transaction cancelled or failed.",
+            sdkDebug: `${result?.reason ?? "unknown"} ${result?.error?.message ?? ""}`.trim(),
+            details: result,
           })
         );
         setBuyLoading(false);
         return;
       }
 
-      // settle: txHash alapján jóváírás
+      const txHash = result.send.transaction;
+
       const settleRes = await fetch("/api/pay/settle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -369,7 +342,6 @@ export default function HomePage() {
           kind: "extra_picks",
           packSize,
           txHash,
-          sdkPath,
         }),
         cache: "no-store",
       });
@@ -381,21 +353,21 @@ export default function HomePage() {
         return;
       }
 
-      await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+      await loadUserState(fid, {
+        username: user?.username ?? null,
+        pfpUrl: user?.pfpUrl ?? null,
+      });
 
       setBuyLoading(false);
       setBuyError(null);
       setShowBuyModal(false);
     } catch (err: any) {
       console.error("handleBuyExtra error:", err);
-      setBuyError(
-        buildPayDebugMessage("Something went wrong.", { error: String(err?.message ?? err) })
-      );
+      setBuyError(buildPayDebugMessage("Something went wrong.", { error: String(err?.message ?? err) }));
       setBuyLoading(false);
     }
   }
 
-  // --- Native TX flow: OG ---
   async function handleBuyOg() {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -414,34 +386,51 @@ export default function HomePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setBuyError(buildPayDebugMessage("Failed to prepare OG transaction", data));
+        setBuyError(buildPayDebugMessage("Failed to prepare OG payment.", data));
         setBuyLoading(false);
         return;
       }
 
-      const tx = data?.tx;
-      if (!tx?.chainId || !tx?.to || !tx?.data) {
-        setBuyError(buildPayDebugMessage("Invalid tx payload from server", data));
-        setBuyLoading(false);
-        return;
-      }
-
-      let txHash = "";
-      let sdkPath = "";
-      try {
-        const sent = await sendTransactionAny(tx);
-        txHash = sent.txHash;
-        sdkPath = sent.sdkPath;
-      } catch (e: any) {
+      if (data?.tx && !data?.token) {
         setBuyError(
-          buildPayDebugMessage("Transaction error.", {
-            error: "Transaction error.",
-            sdkDebug: String(e?.message ?? e),
+          buildPayDebugMessage(
+            "Backend still returns tx payload. Update /api/pay/* to return { token, amount, recipientAddress } for sendToken.",
+            data
+          )
+        );
+        setBuyLoading(false);
+        return;
+      }
+
+      const token = data?.token as string | undefined;
+      const amount = data?.amount as string | undefined;
+      const recipientAddress = data?.recipientAddress as string | undefined;
+
+      if (!token || !amount || !recipientAddress) {
+        setBuyError(buildPayDebugMessage("Invalid OG payment payload from server.", data));
+        setBuyLoading(false);
+        return;
+      }
+
+      const result = await sdk.actions.sendToken({
+        token,
+        amount,
+        recipientAddress,
+      });
+
+      if (!result?.success) {
+        setBuyError(
+          buildPayDebugMessage("Transaction cancelled or failed.", {
+            error: "Transaction cancelled or failed.",
+            sdkDebug: `${result?.reason ?? "unknown"} ${result?.error?.message ?? ""}`.trim(),
+            details: result,
           })
         );
         setBuyLoading(false);
         return;
       }
+
+      const txHash = result.send.transaction;
 
       const settleRes = await fetch("/api/pay/settle", {
         method: "POST",
@@ -450,7 +439,6 @@ export default function HomePage() {
           fid,
           kind: "og_rank",
           txHash,
-          sdkPath,
         }),
         cache: "no-store",
       });
@@ -462,7 +450,10 @@ export default function HomePage() {
         return;
       }
 
-      await loadUserState(fid, { username: user?.username ?? null, pfpUrl: user?.pfpUrl ?? null });
+      await loadUserState(fid, {
+        username: user?.username ?? null,
+        pfpUrl: user?.pfpUrl ?? null,
+      });
 
       setBuyLoading(false);
       setBuyError(null);
@@ -609,7 +600,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* INFO / NO PICKS MESSAGE */}
         {!canPick && (
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
@@ -673,7 +663,7 @@ export default function HomePage() {
           </button>
         </section>
 
-        {/* NAV BUTTONS */}
+        {/* NAV */}
         <section className="flex gap-2">
           <Link
             href="/leaderboard"
@@ -735,7 +725,9 @@ export default function HomePage() {
 
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
-              <p className="text-[11px] text-gray-400">This opens a native wallet confirmation inside Farcaster.</p>
+              <p className="text-[11px] text-gray-400">
+                This opens a native Farcaster wallet confirmation (no new tab).
+              </p>
             </div>
 
             <div className="space-y-2 mb-3">
@@ -747,6 +739,7 @@ export default function HomePage() {
                 <span>+1 extra pick</span>
                 <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}</span>
               </button>
+
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(5)}
@@ -755,6 +748,7 @@ export default function HomePage() {
                 <span>+5 extra picks</span>
                 <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}</span>
               </button>
+
               <button
                 disabled={buyLoading}
                 onClick={() => handleBuyExtra(10)}
@@ -786,7 +780,9 @@ export default function HomePage() {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Waiting for confirmation…
+              </p>
             )}
           </div>
         </div>
@@ -835,7 +831,9 @@ export default function HomePage() {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Waiting for confirmation…
+              </p>
             )}
           </div>
         </div>
