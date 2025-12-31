@@ -16,14 +16,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// ennyi idő után a pending-et elengedjük (ne ragadjon be)
+// csak debugra adjuk vissza
 const PENDING_TTL_MINUTES = 10;
 
 type Body = { fid: number };
-
-function minutesAgoIso(min: number) {
-  return new Date(Date.now() - min * 60 * 1000).toISOString();
-}
 
 export async function POST(req: Request) {
   try {
@@ -45,7 +41,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 0) Ha már OG, backend is védjen
+    // 0) Ha már OG, backend is védjen (UI mellett)
     const { data: userRow, error: uErr } = await supabase
       .from("users")
       .select("fid, is_og")
@@ -57,36 +53,48 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Already OG" }, { status: 409 });
     }
 
-    // 1) Régi pending-ek lejáratása (hogy ne ragadjon be)
+    // 1) Azonnali “unstick”: zárjunk le minden nyitott pending OG rekordot
+    //    amihez még nincs frame_id (txHash). Így megszakadt vásárlás után is
+    //    azonnal tud újra próbálkozni.
+    //
+    // NOTE: ha nálatok nincs 'cancelled' status, cseréld 'expired'-re.
     await supabase
       .from("payments")
-      .update({ status: "expired", updated_at: new Date().toISOString() })
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
       .eq("fid", fid)
       .eq("kind", "og_rank")
       .eq("status", "pending")
-      .is("tx_hash", null)
-      .lt("created_at", minutesAgoIso(PENDING_TTL_MINUTES));
+      .is("frame_id", null);
 
+    // 2) Payment payload
     const amountUnits = parseUnits(OG_PRICE, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    // 2) új pending
+    // 3) új pending sor
     const { error: insertError } = await supabase.from("payments").insert({
       fid,
       kind: "og_rank",
       pack_size: null,
-      frame_id: null,
-      tx_hash: null,
+      frame_id: null, // settle majd txHash-t ide írja
       status: "pending",
     });
 
-    if (insertError) console.error("payments insert OG error:", insertError);
+    if (insertError) {
+      console.error("payments insert OG error:", insertError);
+      // nem blokkoljuk — settle txHash alapján úgyis érvényesít
+    }
 
     return NextResponse.json({
       token,
       amount: amountUnits,
       recipientAddress: RECEIVER_ADDRESS,
-      details: { priceHuman: OG_PRICE, decimals: 6, chainId: 8453, pendingTtlMinutes: PENDING_TTL_MINUTES },
+      details: {
+        priceHuman: OG_PRICE,
+        decimals: 6,
+        chainId: 8453,
+        pendingTtlMinutes: PENDING_TTL_MINUTES,
+        note: "If wallet flow is interrupted, you can retry immediately (old pending gets cancelled).",
+      },
     });
   } catch (e: any) {
     console.error("Error in /api/pay/og:", e);
