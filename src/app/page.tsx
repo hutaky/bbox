@@ -812,20 +812,23 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="border-t border-zinc-800 pt-3 mt-3">
-              <button
-                disabled={buyLoading}
-                onClick={() => {
-                  setShowBuyModal(false);
-                  setShowOgModal(true);
-                  setBuyError(null);
-                  setBuyInfo(null);
-                }}
-                className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
-              >
-                Become an OG box opener
-              </button>
-            </div>
+{!user?.isOg && (
+  <div className="border-t border-zinc-800 pt-3 mt-3">
+    <button
+      disabled={buyLoading}
+      onClick={() => {
+        setShowBuyModal(false);
+        setShowOgModal(true);
+        setBuyError(null);
+        setBuyInfo(null);
+      }}
+      className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
+    >
+      Become an OG box opener
+    </button>
+  </div>
+)}
+
 
             {/* BRAND INFO BOX (donation / mismatch) */}
             {buyInfo && (
