@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isAddress, parseUnits } from "viem";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -34,12 +35,25 @@ function getPrice(packSize: 1 | 5 | 10) {
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
-    const fid = body?.fid;
+    const fid = Number(body?.fid);
     const packSize = body?.packSize;
 
     if (!fid || !Number.isFinite(fid) || !packSize) {
       return NextResponse.json({ error: "Missing fid or packSize" }, { status: 400 });
     }
+
+    // ✅ Rate limit (abuse védelem)
+    // Pay extra: szigorúbb, nehogy spam legyen
+    // - IP: 10 / perc
+    // - FID: 5 / perc
+    const rl = await enforceRateLimit(req, {
+      action: "pay_extra",
+      fid,
+      windowSeconds: 60,
+      ipLimit: 10,
+      fidLimit: 5,
+    });
+    if (rl) return rl;
 
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
       return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
@@ -53,10 +67,7 @@ export async function POST(req: Request) {
     }
 
     // 0) Azonnali “unstick”: zárjunk le minden nyitott pending extra_picks rekordot
-    //    amihez még nincs frame_id (txHash). Így megszakadt vásárlás után is
-    //    azonnal tud újra próbálkozni a user.
-    //
-    // NOTE: ha nálatok nincs 'cancelled' status, cseréld 'expired'-re vagy 'failed'-re.
+    //    amihez még nincs frame_id (txHash).
     await supabase
       .from("payments")
       .update({ status: "cancelled", updated_at: new Date().toISOString() })
