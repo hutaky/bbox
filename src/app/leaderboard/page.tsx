@@ -7,6 +7,7 @@ import sdk from "@farcaster/frame-sdk";
 type LeaderboardRow = {
   fid: number;
   username: string | null;
+  is_og?: boolean | null;
   total_points: number;
   common_count: number;
   rare_count: number;
@@ -17,6 +18,7 @@ type LeaderboardRow = {
 type MyRankRow = {
   fid: number;
   username: string | null;
+  is_og?: boolean | null;
   rank: number | null;
   total_points: number;
   common_count: number;
@@ -32,6 +34,18 @@ function getFidFromQuery(): number | null {
   if (!f) return null;
   const n = Number(f);
   return Number.isFinite(n) ? n : null;
+}
+
+function AnimatedOgPill() {
+  return (
+    <span className="relative inline-flex items-center">
+      <span className="absolute -inset-1 rounded-full bg-purple-500/20 blur-md animate-pulse" />
+      <span className="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-purple-300/60 bg-purple-500/10 text-purple-200">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-300 shadow-[0_0_10px_rgba(192,132,252,0.9)] animate-pulse" />
+        OG
+      </span>
+    </span>
+  );
 }
 
 export default function LeaderboardPage() {
@@ -99,6 +113,7 @@ export default function LeaderboardPage() {
     if (typeof window !== "undefined") {
       void initHeader();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const displayName = viewerName || "BBOX player";
@@ -108,14 +123,12 @@ export default function LeaderboardPage() {
   useEffect(() => {
     async function loadLeaderboard() {
       try {
-        const res = await fetch("/api/leaderboard", {
-          cache: "no-store",
-        });
+        const res = await fetch("/api/leaderboard", { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) {
           setError(data.error || "Failed to load leaderboard");
         } else {
-          setRows(data);
+          setRows(Array.isArray(data) ? data : []);
         }
       } catch (e: any) {
         console.error(e);
@@ -192,9 +205,7 @@ export default function LeaderboardPage() {
           )}
           <div className="text-right">
             <div className="text-sm font-medium truncate">{displayName}</div>
-            {fid && (
-              <div className="text-[11px] text-gray-500">FID #{fid}</div>
-            )}
+            {fid && <div className="text-[11px] text-gray-500">FID #{fid}</div>}
           </div>
         </div>
       </header>
@@ -262,9 +273,7 @@ export default function LeaderboardPage() {
 
         {/* YOUR RANK CARD – neon kártya */}
         <section className="mt-3 rounded-3xl border border-[#1F6DF2]/60 bg-gradient-to-br from-[#0B1020] via-[#050816] to-black px-4 py-3 shadow-[0_0_40px_rgba(31,109,242,0.45)]">
-          <p className="text-[11px] text-gray-300 mb-1">
-            Your rank is:
-          </p>
+          <p className="text-[11px] text-gray-300 mb-1">Your rank is:</p>
           <div className="flex items-baseline justify-between">
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-extrabold text-[#23A9F2] leading-none">
@@ -290,6 +299,8 @@ export default function LeaderboardPage() {
           {rows.map((r, index) => {
             const isMe = fid && r.fid === fid;
             const label = r.username || `fid_${r.fid}`;
+            const isOgRow = Boolean(r.is_og);
+
             const rarityLine = `C ${r.common_count ?? 0} · R ${
               r.rare_count ?? 0
             } · E ${r.epic_count ?? 0} · L ${r.legendary_count ?? 0}`;
@@ -303,10 +314,10 @@ export default function LeaderboardPage() {
                     : "border-slate-800 bg-gradient-to-r from-[#020617] via-[#020617] to-black"
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
                     <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-semibold ${
+                      className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-semibold shrink-0 ${
                         index === 0
                           ? "bg-[#23A9F2]/20 text-[#23A9F2] border border-[#23A9F2]/70"
                           : "bg-slate-800/60 text-slate-200"
@@ -314,16 +325,19 @@ export default function LeaderboardPage() {
                     >
                       #{index + 1}
                     </div>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-semibold">
-                        {label}
+
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-semibold flex items-center gap-2 min-w-0">
+                        <span className="truncate">{label}</span>
+                        {isOgRow && <AnimatedOgPill />}
                       </span>
-                      <span className="text-[11px] text-slate-400">
+                      <span className="text-[11px] text-slate-400 truncate">
                         {rarityLine}
                       </span>
                     </div>
                   </div>
-                  <span className="text-sm font-bold text-[#1F6DF2]">
+
+                  <span className="text-sm font-bold text-[#1F6DF2] shrink-0">
                     {r.total_points ?? 0} pts
                   </span>
                 </div>
