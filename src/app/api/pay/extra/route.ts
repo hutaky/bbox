@@ -37,8 +37,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing fid or packSize" }, { status: 400 });
     }
 
+    // extra debug: env check
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json(
+        {
+          error: "Server misconfigured (missing Supabase env)",
+          details: {
+            hasUrl: Boolean(SUPABASE_URL),
+            hasServiceRoleKey: Boolean(SUPABASE_SERVICE_ROLE_KEY),
+          },
+        },
+        { status: 500 }
+      );
+    }
+
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
+      return NextResponse.json({ error: "Server misconfigured (missing pay env)" }, { status: 500 });
     }
 
     if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
@@ -52,7 +66,6 @@ export async function POST(req: Request) {
     const amount = parseUnits(priceHuman, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    // ⚠️ Fontos: kérjük vissza az id-t, és ha insert fail, álljunk meg
     const { data, error: insertError } = await supabase
       .from("payments")
       .insert({
@@ -61,20 +74,26 @@ export async function POST(req: Request) {
         pack_size: packSize,
         frame_id: null,
         status: "pending",
-        // ajánlott plusz mezők, ha felveszed őket a táblába:
-        // expected_amount: amount,
-        // recipient_address: RECEIVER_ADDRESS,
-        // token,
       })
       .select("id")
       .single();
 
     if (insertError || !data?.id) {
       console.error("payments insert error:", insertError);
-      return NextResponse.json({ error: "Failed to create payment intent" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "Failed to create payment intent",
+          details: {
+            message: insertError?.message ?? null,
+            code: (insertError as any)?.code ?? null,
+            hint: (insertError as any)?.hint ?? null,
+            details: (insertError as any)?.details ?? null,
+          },
+        },
+        { status: 500 }
+      );
     }
 
-    // Response: sendToken-hoz szükséges mezők + paymentId a settle-hez
     return NextResponse.json({
       paymentId: data.id,
       token,
