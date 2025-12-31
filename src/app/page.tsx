@@ -220,11 +220,21 @@ export default function HomePage() {
     (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
 
   const isOg = Boolean(user?.isOg);
+  const freePicks = Number(user?.freePicksRemaining ?? 0);
+  const extraPicks = Number(user?.extraPicksRemaining ?? 0);
+
+  const showOgTomorrowHint =
+    isOg &&
+    freePicks <= 0 &&
+    typeof user?.nextFreePickAt === "string" &&
+    formatCountdown(user.nextFreePickAt) !== "Ready";
 
   // ---- Pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
-    if (!canPick) return;
+    const canNowPick =
+      (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+    if (!canNowPick) return;
 
     try {
       setPicking(true);
@@ -314,24 +324,11 @@ export default function HomePage() {
         return;
       }
 
-      // Kompatibilitás: ha még tx-t küld a backend, adjunk értelmes hibát
-      if (data?.tx && !data?.token) {
-        setBuyError(
-          buildPayDebugMessage(
-            "Backend still returns tx payload. Update /api/pay/* to return { token, amount, recipientAddress } for sendToken.",
-            data
-          )
-        );
-        setBuyLoading(false);
-        return;
-      }
-
-      const paymentId = data?.paymentId as string | undefined;
       const token = data?.token as string | undefined;
       const amount = data?.amount as string | undefined;
       const recipientAddress = data?.recipientAddress as string | undefined;
 
-      if (!paymentId || !token || !amount || !recipientAddress) {
+      if (!token || !amount || !recipientAddress) {
         setBuyError(buildPayDebugMessage("Invalid payment payload from server.", data));
         setBuyLoading(false);
         return;
@@ -370,7 +367,12 @@ export default function HomePage() {
       const settleRes = await fetch("/api/pay/settle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId, txHash }),
+        body: JSON.stringify({
+          fid,
+          kind: "extra_picks",
+          packSize,
+          txHash,
+        }),
         cache: "no-store",
       });
 
@@ -411,7 +413,6 @@ export default function HomePage() {
       return;
     }
 
-    // UI safety (backend is the real guard)
     if (user?.isOg) {
       setBuyInfo("You’re already OG ✅");
       return;
@@ -430,24 +431,16 @@ export default function HomePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // Already OG / pending
-        if (res.status === 409 && (data?.code === "ALREADY_OG" || data?.code === "PAYMENT_PENDING")) {
-          setBuyInfo(data?.error ?? "You’re already OG ✅");
-          setBuyLoading(false);
-          return;
-        }
-
         setBuyError(buildPayDebugMessage("Failed to prepare OG payment.", data));
         setBuyLoading(false);
         return;
       }
 
-      const paymentId = data?.paymentId as string | undefined;
       const token = data?.token as string | undefined;
       const amount = data?.amount as string | undefined;
       const recipientAddress = data?.recipientAddress as string | undefined;
 
-      if (!paymentId || !token || !amount || !recipientAddress) {
+      if (!token || !amount || !recipientAddress) {
         setBuyError(buildPayDebugMessage("Invalid OG payment payload from server.", data));
         setBuyLoading(false);
         return;
@@ -486,7 +479,11 @@ export default function HomePage() {
       const settleRes = await fetch("/api/pay/settle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId, txHash }),
+        body: JSON.stringify({
+          fid,
+          kind: "og_rank",
+          txHash,
+        }),
         cache: "no-store",
       });
 
@@ -560,8 +557,7 @@ export default function HomePage() {
 
   const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-
-  const rankLabel = user?.isOg ? "BOX OG" : "BOX Based";
+  const rankLabel = isOg ? "BOX OG" : "BOX Based";
 
   if (loading) {
     return (
@@ -578,46 +574,47 @@ export default function HomePage() {
     <main className="min-h-screen bg-gradient-to-b from-[#02010A] via-[#050315] to-black text-white">
       <div className="max-w-md mx-auto px-4 pb-6 pt-4">
         {/* HEADER */}
-        <header className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
+        <header className="flex items-center justify-between mb-4 gap-3">
+          <div className="flex items-center gap-2 min-w-0">
             <img
               src="/icon.png"
               alt="BBOX logo"
               className="w-9 h-9 rounded-xl border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] bg-black/60"
             />
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                <span>BBOX</span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 border border-emerald-400/60 text-emerald-200">
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2 min-w-0">
+                <span className="shrink-0">BBOX</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 border border-emerald-400/60 text-emerald-200 shrink-0">
                   Season 0
                 </span>
               </h1>
               <p className="text-[11px] text-gray-400 flex items-center gap-1">
                 <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
-                <span>Daily Based Box game</span>
+                <span className="truncate">Daily Based Box game</span>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* ✅ Fix: jobb felső user blokk stabil mobilon/desktopon */}
+          <div className="flex items-center gap-2 min-w-0">
             {user?.pfpUrl ? (
               <img
                 src={user.pfpUrl}
                 alt={displayName}
-                className="w-9 h-9 rounded-full border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] object-cover"
+                className="w-9 h-9 rounded-full border border-[#00C2FF]/40 shadow-[0_0_18px_rgba(0,194,255,0.6)] object-cover shrink-0"
               />
             ) : (
-              <div className="w-9 h-9 rounded-full border border-[#00C2FF]/40 bg-gradient-to-br from-[#16162A] to-[#050315] flex items-center justify-center shadow-[0_0_18px_rgba(0,194,255,0.4)] text-sm font-semibold">
+              <div className="w-9 h-9 rounded-full border border-[#00C2FF]/40 bg-gradient-to-br from-[#16162A] to-[#050315] flex items-center justify-center shadow-[0_0_18px_rgba(0,194,255,0.4)] text-sm font-semibold shrink-0">
                 {displayName.charAt(0).toUpperCase()}
               </div>
             )}
-            <div className="text-right">
-              <div className="text-sm font-medium truncate max-w-[140px] flex items-center justify-end gap-2">
-                <span className="truncate max-w-[120px]">{displayName}</span>
 
-                {/* ✅ OG badge animáció */}
+            <div className="text-right min-w-0">
+              <div className="flex items-center justify-end gap-2 min-w-0">
+                <span className="text-sm font-medium truncate max-w-[140px]">{displayName}</span>
+
                 {isOg && (
-                  <span className="relative inline-flex items-center">
+                  <span className="relative inline-flex items-center shrink-0">
                     <span className="absolute -inset-1 rounded-full bg-purple-500/20 blur-md animate-pulse" />
                     <span className="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-purple-300/60 bg-purple-500/10 text-purple-200">
                       <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-300 shadow-[0_0_10px_rgba(192,132,252,0.9)] animate-pulse" />
@@ -626,6 +623,7 @@ export default function HomePage() {
                   </span>
                 )}
               </div>
+
               <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
@@ -637,7 +635,7 @@ export default function HomePage() {
           <div className="absolute -right-20 -top-24 w-52 h-52 rounded-full bg-[#7C3AED]/15 blur-3xl pointer-events-none" />
 
           <div className="flex items-start justify-between gap-3 relative z-10">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
                 <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
@@ -645,31 +643,39 @@ export default function HomePage() {
 
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
-                <span className="font-medium text-emerald-300">{user?.extraPicksRemaining ?? 0}</span>
+                <span className="font-medium text-emerald-300">{extraPicks}</span>
               </div>
 
-              {/* ✅ OG free pick kiemelés */}
+              {/* ✅ Fix: free picks sor mobilon nem csúszik szét */}
               <div
                 className={`mt-1 rounded-xl px-2 py-1 ${
-                  isOg
-                    ? "bg-purple-500/10 border border-purple-300/30 shadow-[0_0_18px_rgba(192,132,252,0.25)]"
-                    : ""
+                  isOg ? "bg-purple-500/10 border border-purple-300/30" : ""
                 }`}
               >
-                <div className="flex justify-between text-xs text-[#B0BBFF]/80">
-                  <span className="flex items-center gap-2">
-                    <span>Free picks:</span>
-                    {isOg && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-300/40 text-purple-200">
-                        OG bonus +1/day
-                      </span>
-                    )}
-                  </span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-xs text-[#B0BBFF]/80">Free picks:</div>
 
-                  <span className={`font-medium ${isOg ? "text-purple-200" : "text-sky-300"}`}>
-                    {user?.freePicksRemaining ?? 0}
-                  </span>
+                    {isOg && (
+                      <div className="mt-1">
+                        <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-300/40 text-purple-200">
+                          OG bonus +1/day
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`text-sm font-semibold ${isOg ? "text-purple-200" : "text-sky-300"} shrink-0`}>
+                    {freePicks}
+                  </div>
                 </div>
+
+                {/* ✅ Egyértelmű: holnaptól 2 free pick */}
+                {showOgTomorrowHint && (
+                  <p className="mt-2 text-[11px] text-purple-200/90">
+                    Tomorrow you’ll get <span className="font-semibold">2 free picks</span> as OG.
+                  </p>
+                )}
               </div>
 
               <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
@@ -680,7 +686,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 shrink-0">
               <div className="px-3 py-2 rounded-2xl bg-gradient-to-br from-[#14162F] via-[#191B3D] to-[#050315] border border-[#2B3170] shadow-[0_0_20px_rgba(124,58,237,0.3)] min-w-[120px]">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">{rankLabel}</div>
                 <div className="text-xs font-semibold text-[#F4F0FF]">{league}</div>
@@ -831,7 +837,6 @@ export default function HomePage() {
               </p>
             </div>
 
-            {/* Brand / donation note */}
             <div className="mb-3 rounded-2xl border border-[#1C2348] bg-[#070B2A]/40 px-3 py-2">
               <p className="text-[11px] text-gray-300 leading-snug">
                 Heads up: If you change the amount in the wallet screen, no picks will be added.
@@ -868,7 +873,6 @@ export default function HomePage() {
               </button>
             </div>
 
-            {/* ✅ OG link elrejtése, ha már OG */}
             {!user?.isOg && (
               <div className="border-t border-zinc-800 pt-3 mt-2">
                 <button
@@ -929,7 +933,6 @@ export default function HomePage() {
               </p>
             </div>
 
-            {/* ✅ OG gomb tiltása + szöveg */}
             <button
               disabled={buyLoading || Boolean(user?.isOg)}
               onClick={() => {
