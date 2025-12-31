@@ -57,12 +57,12 @@ export async function GET() {
       });
     }
 
-    // 2) Username-ek lehúzása
-    const fids = stats.map((s) => s.fid);
+    // 2) Username-ek + OG flag lehúzása
+    const fids = stats.map((s: any) => s.fid).filter(Boolean);
 
     const { data: users, error: usersErr } = await supabase
       .from("users")
-      .select("fid, username")
+      .select("fid, username, is_og")
       .in("fid", fids);
 
     if (usersErr) {
@@ -70,21 +70,28 @@ export async function GET() {
       // ha ez elszáll, usernév nélkül is menjen
     }
 
-    const usernameMap = new Map<number, string | null>();
+    const userMap = new Map<number, { username: string | null; is_og: boolean }>();
     (users || []).forEach((u: any) => {
-      usernameMap.set(u.fid, u.username ?? null);
+      userMap.set(u.fid, {
+        username: u.username ?? null,
+        is_og: Boolean(u.is_og),
+      });
     });
 
-    // 3) Frontend által várt struktúra
-    const rows = stats.map((s: any) => ({
-      fid: s.fid,
-      username: usernameMap.get(s.fid) ?? null,
-      total_points: s.total_points ?? 0,
-      common_count: s.common_opens ?? 0,
-      rare_count: s.rare_opens ?? 0,
-      epic_count: s.epic_opens ?? 0,
-      legendary_count: s.legendary_opens ?? 0,
-    }));
+    // 3) Frontend által várt struktúra (+ is_og)
+    const rows = stats.map((s: any) => {
+      const u = userMap.get(s.fid);
+      return {
+        fid: s.fid,
+        username: u?.username ?? null,
+        is_og: u?.is_og ?? false,
+        total_points: s.total_points ?? 0,
+        common_count: s.common_opens ?? 0,
+        rare_count: s.rare_opens ?? 0,
+        epic_count: s.epic_opens ?? 0,
+        legendary_count: s.legendary_opens ?? 0,
+      };
+    });
 
     return NextResponse.json(rows, {
       headers: {
