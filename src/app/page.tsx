@@ -7,6 +7,10 @@ import { sdk } from "@farcaster/miniapp-sdk";
 import type { ApiUserState } from "@/types";
 import confetti from "canvas-confetti";
 
+// ✅ Share-hez ezt használjuk (szép embed, nem látszik a vercel domain)
+const SHARE_APP_URL = "https://farcaster.xyz/miniapps/c70HLy47umXy/bbox";
+
+// (ha kell máshol, maradhat, de share-ben már nem ezt használjuk)
 const BBOX_URL = "https://box-sage.vercel.app";
 
 type BoxRarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY";
@@ -110,7 +114,7 @@ function AnimatedOgPill() {
 function fireConfetti(rarity: BoxRarity) {
   const base = {
     spread: 70,
-    origin: { y: 0.65 },
+    origin: { y: 0.65 as const },
     ticks: 200,
   };
 
@@ -143,27 +147,22 @@ function fireConfetti(rarity: BoxRarity) {
 
 /**
  * Share: mobilon + böngészőben is működjön.
- * - Farcaster MiniApp hostban: sdk.actions.openUrl()
+ * - MiniApp hostban: sdk.actions.openUrl()
  * - Fallback: window.open / location.href
- * - Compose endpoint: warpcast.com (a farcaster.com/~/compose sokszor 403/404)
  */
 async function openShareUrl(url: string) {
-  // 1) MiniApp SDK
   try {
     await sdk.actions.openUrl(url);
     return;
   } catch {
-    // ignore, jön a fallback
+    // fallback
   }
 
-  // 2) Browser fallback
   if (typeof window !== "undefined") {
     try {
       const w = window.open(url, "_blank", "noopener,noreferrer");
       if (w) return;
-    } catch {
-      // ignore
-    }
+    } catch {}
     window.location.href = url;
   }
 }
@@ -364,10 +363,14 @@ export default function HomePage() {
     if (!lastResult) return;
 
     const rarityLabel = lastResult.rarity.toLowerCase();
-    const fullText = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁\n\nPlay BBOX here: ${BBOX_URL}`;
 
-    // ✅ warpcast compose (mobil + browser barát)
-    const composeUrl = buildWarpcastComposeUrl(fullText, BBOX_URL);
+    // ✅ szebb, “hype”-osabb copy + nincs vercel domain
+    const text =
+      `🎁 Pulled a ${rarityLabel} box on BBOX (+${lastResult.points} pts)\n\n` +
+      `Come open your daily boxes 👇`;
+
+    // ✅ a Farcaster miniapps linket embedeljük (szép preview)
+    const composeUrl = buildWarpcastComposeUrl(text, SHARE_APP_URL);
 
     try {
       await openShareUrl(composeUrl);
@@ -804,17 +807,18 @@ export default function HomePage() {
                       : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
                   }`}
               >
-<div className="relative z-10 h-full flex items-center justify-center">
-  <img
-    src="/pick.png"
-    alt="open BBOX"
-    className="w-20 h-20 drop-shadow-[0_0_35px_rgba(124,58,237,0.65)]
-               transition-transform duration-300
-               group-hover:scale-110"
-  />
-</div>
+                {/* ✅ visszatettük a hover overlayeket + NINCS rossz </div> */}
+                <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/25 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
 
+                <div className="relative z-10 h-full flex items-center justify-center">
+                  <img
+                    src="/pick.png"
+                    alt="Open BBOX"
+                    className="w-20 h-20 drop-shadow-[0_0_35px_rgba(124,58,237,0.65)] transition-transform duration-300 group-hover:scale-110"
+                  />
                 </div>
+
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
                   <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
                 </div>
@@ -859,12 +863,17 @@ export default function HomePage() {
       {showResultModal && lastResult && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
           <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-            <button onClick={() => setShowResultModal(false)} className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm">
+            <button
+              onClick={() => setShowResultModal(false)}
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
+            >
               ✕
             </button>
             <div className="text-center mt-2">
               <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
-              <h3 className="text-sm font-semibold mb-2">You opened a {renderRarityLabel(lastResult.rarity)}!</h3>
+              <h3 className="text-sm font-semibold mb-2">
+                You opened a {renderRarityLabel(lastResult.rarity)}!
+              </h3>
               <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
               <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
               <button
@@ -901,15 +910,13 @@ export default function HomePage() {
 
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
-              <p className="text-[11px] text-gray-400">
-                This opens a native Farcaster wallet confirmation.
-              </p>
+              <p className="text-[11px] text-gray-400">This opens a native Farcaster wallet confirmation.</p>
             </div>
 
             <div className="mb-3 rounded-2xl border border-[#1C2348] bg-[#070B2A]/40 px-3 py-2">
               <p className="text-[11px] text-gray-300 leading-snug">
-                Heads up: If you change the amount in the wallet screen, no picks will be added.
-                The transfer will be treated as a donation — thanks for supporting BBOX 💙
+                Heads up: If you change the amount in the wallet screen, no picks will be added. The transfer will be
+                treated as a donation — thanks for supporting BBOX 💙
               </p>
             </div>
 
@@ -954,9 +961,7 @@ export default function HomePage() {
               </div>
             )}
 
-            {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
-            )}
+            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>}
           </div>
         </div>
       )}
