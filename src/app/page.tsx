@@ -668,7 +668,7 @@ export default function HomePage() {
 
                   {isOg ? (
                     <div className="mt-1 text-[10px] text-purple-200/90">
-                      +1 extra free box/day as OG
+                      +1 extra box as OG
                     </div>
                   ) : (
                     <button
