@@ -8,7 +8,6 @@ export const runtime = "nodejs";
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 
-// árak (human) – envből
 const PRICE_1 = String(process.env.BBOX_EXTRA_PRICE_1 || "0.5");
 const PRICE_5 = String(process.env.BBOX_EXTRA_PRICE_5 || "2.0");
 const PRICE_10 = String(process.env.BBOX_EXTRA_PRICE_10 || "3.5");
@@ -50,30 +49,38 @@ export async function POST(req: Request) {
     }
 
     const priceHuman = getPrice(packSize);
+    const amount = parseUnits(priceHuman, 6).toString();
+    const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    // USDC decimals = 6 → base units string kell a sendToken-nak
-    const amountUnits = parseUnits(priceHuman, 6).toString();
+    // ⚠️ Fontos: kérjük vissza az id-t, és ha insert fail, álljunk meg
+    const { data, error: insertError } = await supabase
+      .from("payments")
+      .insert({
+        fid,
+        kind: "extra_picks",
+        pack_size: packSize,
+        frame_id: null,
+        status: "pending",
+        // ajánlott plusz mezők, ha felveszed őket a táblába:
+        // expected_amount: amount,
+        // recipient_address: RECEIVER_ADDRESS,
+        // token,
+      })
+      .select("id")
+      .single();
 
-    // CAIP-19 asset id (Base + ERC20)
-    const token = `eip155:8453/erc20:${USDC_CONTRACT}`; // pl: eip155:8453/erc20:0x8335...
+    if (insertError || !data?.id) {
+      console.error("payments insert error:", insertError);
+      return NextResponse.json({ error: "Failed to create payment intent" }, { status: 500 });
+    }
 
-    // pending payment record
-    const { error: insertError } = await supabase.from("payments").insert({
-      fid,
-      kind: "extra_picks",
-      pack_size: packSize,
-      frame_id: null,
-      status: "pending",
-    });
-
-    if (insertError) console.error("payments insert error:", insertError);
-
+    // Response: sendToken-hoz szükséges mezők + paymentId a settle-hez
     return NextResponse.json({
+      paymentId: data.id,
       token,
-      amount: amountUnits,
+      amount,
       recipientAddress: RECEIVER_ADDRESS,
       packSize,
-      details: { priceHuman, decimals: 6, chainId: 8453 },
     });
   } catch (e: any) {
     console.error("Error in /api/pay/extra:", e);
