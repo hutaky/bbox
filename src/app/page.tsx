@@ -804,16 +804,16 @@ export default function HomePage() {
                       : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
                   }`}
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/35 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
-                <div className="relative z-10 h-full flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-[#00C2FF]/80 to-[#00C2FF]/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,194,255,0.35)] border border-white/20">
-                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-white/90" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                      <path d="M3.3 7L12 12l8.7-5" />
-                      <path d="M12 22V12" />
-                    </svg>
-                  </div>
+<div className="relative z-10 h-full flex items-center justify-center">
+  <img
+    src="/pick.png"
+    alt="open BBOX"
+    className="w-20 h-20 drop-shadow-[0_0_35px_rgba(124,58,237,0.65)]
+               transition-transform duration-300
+               group-hover:scale-110"
+  />
+</div>
+
                 </div>
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
                   <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
