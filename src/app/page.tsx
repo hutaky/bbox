@@ -812,11 +812,17 @@ export default function HomePage() {
                 <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
 
                 <div className="relative z-10 h-full flex items-center justify-center">
-                  <img
-                    src="/pick.png"
-                    alt="Open BBOX"
-                    className="w-20 h-20 drop-shadow-[0_0_35px_rgba(124,58,237,0.65)] transition-transform duration-300 group-hover:scale-110"
-                  />
+<img
+  src="/pick.png"
+  alt="open BBOX"
+  className="
+    w-[78%] h-[78%] max-w-[140px] max-h-[140px]
+    object-contain
+    drop-shadow-[0_0_35px_rgba(124,58,237,0.65)]
+    transition-transform duration-300
+    group-hover:scale-110
+  "
+/>
                 </div>
 
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
