@@ -85,10 +85,6 @@ export async function POST(req: Request) {
     }
 
     // ✅ Rate limit (SETTLE)
-    // settle lehet többször retry-olva, ezért engedékenyebb:
-    // - IP: 30 / perc
-    // - FID: 15 / perc
-    // action-ban elkülönítjük a kind-et is
     const rl = await enforceRateLimit(req, {
       action: `pay_settle_${kind}`,
       fid,
@@ -158,6 +154,37 @@ export async function POST(req: Request) {
       );
     }
 
+    // ✅ SENDER-CHECK (TX.FROM == users.address) ---
+    // Ha még nincs eltárolva address, nem blokkolunk.
+    // Ha van és nem egyezik, akkor reject (különben bárki más txHash-ét beadhatná).
+    {
+      const { data: u, error: uErr } = await supabase
+        .from("users")
+        .select("address")
+        .eq("fid", fid)
+        .maybeSingle();
+
+      if (uErr) console.warn("users select address error:", uErr);
+
+      const stored = (u?.address || "").trim();
+      const from = (tx.from || "").toLowerCase();
+
+      if (stored) {
+        const storedLower = stored.toLowerCase();
+        // csak akkor szigorítunk, ha a stored address valid
+        if (isAddress(storedLower as `0x${string}`) && from && storedLower !== from) {
+          return NextResponse.json(
+            {
+              error: "Wrong sender",
+              details: { expectedFrom: stored, actualFrom: tx.from, fid },
+            },
+            { status: 400, headers: { "Cache-Control": "no-store" } }
+          );
+        }
+      }
+    }
+
+    // USDC contract call expected
     if ((tx.to || "").toLowerCase() !== USDC_CONTRACT.toLowerCase()) {
       return NextResponse.json(
         { error: "Wrong contract", details: { expectedTo: USDC_CONTRACT, actualTo: tx.to } },
@@ -264,7 +291,7 @@ export async function POST(req: Request) {
     }
 
     if (kind === "og_rank") {
-      // ✅ FIX: users tábládban NINCS updated_at, ezért csak is_og-t írunk
+      // users tábládban nincs updated_at → csak is_og
       const { error: uErr } = await supabase
         .from("users")
         .update({ is_og: true })
