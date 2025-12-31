@@ -22,6 +22,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+// 10 perc után a “pending” purchase-t tekintsük megszakadtnak,
+// hogy a user tudjon újra próbálkozni.
+const PENDING_TTL_MINUTES = 10;
+
 const erc20Abi = [
   {
     type: "function",
@@ -42,7 +46,7 @@ type Body =
 function toUnits6(s: string): bigint {
   const [a, b = ""] = s.split(".");
   const frac = (b + "000000").slice(0, 6);
-  return BigInt(a) * 1000000n + BigInt(frac);
+  return BigInt(a || "0") * 1000000n + BigInt(frac || "0");
 }
 
 function expectedAmount(kind: Body["kind"], packSize?: 1 | 5 | 10): bigint {
@@ -53,11 +57,15 @@ function expectedAmount(kind: Body["kind"], packSize?: 1 | 5 | 10): bigint {
   throw new Error("Invalid packSize");
 }
 
+function isoMinutesAgo(mins: number) {
+  return new Date(Date.now() - mins * 60 * 1000).toISOString();
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
 
-    const fid = (body as any)?.fid;
+    const fid = (body as any)?.fid as number | undefined;
     const kind = (body as any)?.kind as Body["kind"] | undefined;
     const txHash = (body as any)?.txHash as `0x${string}` | undefined;
     const packSize = (body as any)?.packSize as 1 | 5 | 10 | undefined;
@@ -74,17 +82,41 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid RECEIVER/USDC address" }, { status: 500 });
     }
 
-    // 0) IDEMPOTENCIA: ha tx_hash már completed → ok
-    const { data: existingPay, error: exErr } = await supabase
-      .from("payments")
-      .select("id, status, kind, pack_size, fid, tx_hash")
-      .eq("tx_hash", txHash)
-      .maybeSingle();
+    // --- 0) Idempotencia: ha már volt ilyen txHash feldolgozva, ne krediteljünk újra ---
+    // (frame_id mezőben tároljuk a txHash-t)
+    {
+      const { data: already, error: aErr } = await supabase
+        .from("payments")
+        .select("id, status")
+        .eq("frame_id", txHash)
+        .maybeSingle();
 
-    if (exErr) console.error("payments lookup by tx_hash error:", exErr);
+      // ha a select hibázik, nem állunk meg, csak logoljuk
+      if (aErr) console.warn("payments idempotency check error:", aErr);
 
-    if (existingPay?.status === "completed") {
-      return NextResponse.json({ ok: true, alreadyProcessed: true, txHash });
+      if (already?.status === "completed") {
+        return NextResponse.json({ ok: true, txHash, alreadyProcessed: true });
+      }
+    }
+
+    // --- 1) Pending “beragadás” kezelése: régi pending sorok lezárása ---
+    // (hogy új vásárlást tudjon indítani)
+    // NOTE: Ha nálad nincs 'cancelled' status, cseréld 'failed'-re.
+    try {
+      const cutoff = isoMinutesAgo(PENDING_TTL_MINUTES);
+
+      // extra_picks pendingek (minden pack)
+      await supabase
+        .from("payments")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("fid", fid)
+        .eq("status", "pending")
+        .lt("created_at", cutoff);
+
+      // (opcionális) csak az adott kind-et is lehetne szűrni,
+      // de így minden régi pendinget takarítunk.
+    } catch (e) {
+      console.warn("pending cleanup failed (non-fatal):", e);
     }
 
     const client = createPublicClient({
@@ -92,7 +124,7 @@ export async function POST(req: Request) {
       transport: http(RPC_URL),
     });
 
-    // Tx + receipt
+    // --- 2) Tx lekérés ---
     const tx = await client.getTransaction({ hash: txHash }).catch(() => null);
     if (!tx) {
       return NextResponse.json(
@@ -126,11 +158,15 @@ export async function POST(req: Request) {
     const exp = expectedAmount(kind, packSize);
     if (amount !== exp) {
       return NextResponse.json(
-        { error: "Wrong amount", details: { expected: exp.toString(), actual: amount.toString(), kind, packSize } },
+        {
+          error: "Wrong amount",
+          details: { expected: exp.toString(), actual: amount.toString(), kind, packSize },
+        },
         { status: 400 }
       );
     }
 
+    // --- 3) Receipt ---
     const receipt = await client.getTransactionReceipt({ hash: txHash }).catch(() => null);
     if (!receipt || receipt.status !== "success") {
       return NextResponse.json(
@@ -143,13 +179,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- DB credit (1x) + payment completed ---
-    const nowIso = new Date().toISOString();
-
+    // --- 4) DB credit + payments update ---
     if (kind === "extra_picks") {
       const add = packSize ?? 0;
 
-      // kredit
       const { data: stats, error: sErr } = await supabase
         .from("user_stats")
         .select("fid, extra_picks_remaining")
@@ -165,58 +198,67 @@ export async function POST(req: Request) {
 
       const { error: uErr } = await supabase
         .from("user_stats")
-        .update({ extra_picks_remaining: next, updated_at: nowIso })
+        .update({ extra_picks_remaining: next, updated_at: new Date().toISOString() })
         .eq("fid", fid);
 
       if (uErr) return NextResponse.json({ error: "Failed to credit picks", details: uErr }, { status: 500 });
 
-      // payment: tx_hash + completed (ha nincs is előzetes row, akkor is létrehozzuk)
-      await supabase
+      // először próbáljuk a megfelelő pending sort completed-re állítani
+      const { data: updatedRows, error: pErr } = await supabase
         .from("payments")
-        .insert({
-          fid,
-          kind: "extra_picks",
-          pack_size: packSize ?? null,
-          frame_id: null,
-          tx_hash: txHash,
-          status: "completed",
-        })
-        .catch(() => null);
-
-      // és az esetlegesen létező "pending" sorokat is lezárjuk
-      await supabase
-        .from("payments")
-        .update({ status: "completed", tx_hash: txHash, updated_at: nowIso })
+        .update({ status: "completed", frame_id: txHash, updated_at: new Date().toISOString() })
         .eq("fid", fid)
         .eq("kind", "extra_picks")
         .eq("pack_size", packSize ?? null)
-        .eq("status", "pending");
+        .eq("status", "pending")
+        .select("id");
+
+      if (pErr) console.warn("payments update (extra_picks) error:", pErr);
+
+      // ha nem volt pending sor (pl. régi cleanup miatt), tegyünk be egy completed rekordot,
+      // hogy később auditálható legyen
+      if (!updatedRows || updatedRows.length === 0) {
+        const { error: insErr } = await supabase.from("payments").insert({
+          fid,
+          kind: "extra_picks",
+          pack_size: packSize ?? null,
+          frame_id: txHash,
+          status: "completed",
+        });
+        if (insErr) console.warn("payments insert (extra_picks completed) error:", insErr);
+      }
 
       return NextResponse.json({ ok: true, credited: add, txHash });
     }
 
     if (kind === "og_rank") {
-      const { error: uErr } = await supabase.from("users").update({ is_og: true }).eq("fid", fid);
+      const { error: uErr } = await supabase
+        .from("users")
+        .update({ is_og: true, updated_at: new Date().toISOString() })
+        .eq("fid", fid);
+
       if (uErr) return NextResponse.json({ error: "Failed to set OG", details: uErr }, { status: 500 });
 
-      await supabase
+      const { data: updatedRows, error: pErr } = await supabase
         .from("payments")
-        .insert({
+        .update({ status: "completed", frame_id: txHash, updated_at: new Date().toISOString() })
+        .eq("fid", fid)
+        .eq("kind", "og_rank")
+        .eq("status", "pending")
+        .select("id");
+
+      if (pErr) console.warn("payments update (og_rank) error:", pErr);
+
+      if (!updatedRows || updatedRows.length === 0) {
+        const { error: insErr } = await supabase.from("payments").insert({
           fid,
           kind: "og_rank",
           pack_size: null,
-          frame_id: null,
-          tx_hash: txHash,
+          frame_id: txHash,
           status: "completed",
-        })
-        .catch(() => null);
-
-      await supabase
-        .from("payments")
-        .update({ status: "completed", tx_hash: txHash, updated_at: nowIso })
-        .eq("fid", fid)
-        .eq("kind", "og_rank")
-        .eq("status", "pending");
+        });
+        if (insErr) console.warn("payments insert (og_rank completed) error:", insErr);
+      }
 
       return NextResponse.json({ ok: true, txHash });
     }
