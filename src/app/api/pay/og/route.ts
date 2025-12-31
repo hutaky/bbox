@@ -48,4 +48,37 @@ export async function POST(req: Request) {
     const amount = parseUnits(OG_PRICE, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    // ⚠️ pending payme
+    const { data, error: insertError } = await supabase
+      .from("payments")
+      .insert({
+        fid,
+        kind: "og_rank",
+        pack_size: null,
+        frame_id: null,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (insertError || !data?.id) {
+      console.error("payments insert OG error:", insertError);
+      return NextResponse.json(
+        { error: "Failed to create OG payment intent" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      paymentId: data.id,
+      token,
+      amount,
+      recipientAddress: RECEIVER_ADDRESS,
+    });
+  } catch (e: any) {
+    console.error("Error in /api/pay/og:", e);
+    return NextResponse.json(
+      { error: "Internal server error", details: String(e?.message ?? e) },
+      { status: 500 }
+    );
+  }
+}
