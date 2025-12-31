@@ -870,13 +870,23 @@ export default function HomePage() {
               </p>
             </div>
 
-            <button
-              disabled={buyLoading}
-              onClick={handleBuyOg}
-              className="w-full py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-xs font-semibold mb-2"
-            >
-              Become OG ({process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)
-            </button>
+<button
+  disabled={buyLoading || Boolean(user?.isOg)}
+  onClick={() => {
+    if (!user?.isOg) handleBuyOg();
+  }}
+  className={`w-full py-2 rounded-xl text-xs font-semibold mb-2 transition
+    ${
+      buyLoading || user?.isOg
+        ? "bg-zinc-800 text-zinc-400 cursor-not-allowed"
+        : "bg-purple-700 hover:bg-purple-600 text-white"
+    }`}
+>
+  {user?.isOg
+    ? "You’re already OG ✅"
+    : `Become OG (${process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)`}
+</button>
+
 
             <button
               onClick={() => setShowOgModal(false)}
