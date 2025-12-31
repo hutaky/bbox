@@ -1,13 +1,7 @@
 // src/app/api/pay/settle/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import {
-  createPublicClient,
-  decodeFunctionData,
-  http,
-  isAddress,
-  parseUnits,
-} from "viem";
+import { createPublicClient, decodeFunctionData, http, isAddress } from "viem";
 import { base } from "viem/chains";
 
 export const runtime = "nodejs";
@@ -41,55 +35,41 @@ const erc20Abi = [
   },
 ] as const;
 
-type LegacyBody =
-  | {
-      fid: number;
-      kind: "extra_picks";
-      packSize: 1 | 5 | 10;
-      txHash: `0x${string}`;
-    }
+type Body =
+  | { fid: number; kind: "extra_picks"; packSize: 1 | 5 | 10; txHash: `0x${string}` }
   | { fid: number; kind: "og_rank"; txHash: `0x${string}` };
 
-// ÚJ ajánlott body (prepare endpointok paymentId-t adnak vissza)
-type NewBody = { paymentId: string; txHash: `0x${string}` };
-
-type AnyBody = NewBody | LegacyBody;
-
-function isTxHash(s: unknown): s is `0x${string}` {
-  return (
-    typeof s === "string" &&
-    /^0x[0-9a-fA-F]{64}$/.test(s)
-  );
+function toUnits6(s: string): bigint {
+  const [a, b = ""] = s.split(".");
+  const frac = (b + "000000").slice(0, 6);
+  return BigInt(a) * 1000000n + BigInt(frac);
 }
 
-function expectedAmountFrom(kind: "extra_picks" | "og_rank", packSize?: 1 | 5 | 10): bigint {
-  if (kind === "og_rank") return parseUnits(OG_PRICE, 6);
-
-  if (packSize === 1) return parseUnits(PRICE_1, 6);
-  if (packSize === 5) return parseUnits(PRICE_5, 6);
-  if (packSize === 10) return parseUnits(PRICE_10, 6);
-
-  throw new Error("Invalid packSize for extra_picks");
-}
-
-function nowIso() {
-  return new Date().toISOString();
+function expectedAmount(kind: Body["kind"], packSize?: 1 | 5 | 10): bigint {
+  if (kind === "og_rank") return toUnits6(OG_PRICE);
+  if (packSize === 1) return toUnits6(PRICE_1);
+  if (packSize === 5) return toUnits6(PRICE_5);
+  if (packSize === 10) return toUnits6(PRICE_10);
+  throw new Error("Invalid packSize");
 }
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as AnyBody | null;
+    const body = (await req.json().catch(() => null)) as Body | null;
 
-    const txHash = (body as any)?.txHash;
-    const paymentId = (body as any)?.paymentId;
+    const fid = (body as any)?.fid;
+    const kind = (body as any)?.kind as Body["kind"] | undefined;
+    const txHash = (body as any)?.txHash as `0x${string}` | undefined;
+    const packSize = (body as any)?.packSize as 1 | 5 | 10 | undefined;
 
-    if (!isTxHash(txHash)) {
-      return NextResponse.json({ error: "Missing or invalid txHash" }, { status: 400 });
+    if (!fid || !Number.isFinite(fid) || !kind || !txHash) {
+      return NextResponse.json({ error: "Missing fid/kind/txHash" }, { status: 400 });
     }
 
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
       return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
     }
+
     if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
       return NextResponse.json({ error: "Invalid RECEIVER/USDC address" }, { status: 500 });
     }
@@ -99,7 +79,7 @@ export async function POST(req: Request) {
       transport: http(RPC_URL),
     });
 
-    // 1) Tx + receipt (on-chain validáció)
+    // Tx + receipt
     const tx = await client.getTransaction({ hash: txHash }).catch(() => null);
     if (!tx) {
       return NextResponse.json(
@@ -125,10 +105,15 @@ export async function POST(req: Request) {
 
     if (to.toLowerCase() !== RECEIVER_ADDRESS.toLowerCase()) {
       return NextResponse.json(
-        {
-          error: "Wrong receiver",
-          details: { expectedReceiver: RECEIVER_ADDRESS, actualReceiver: to },
-        },
+        { error: "Wrong receiver", details: { expectedReceiver: RECEIVER_ADDRESS, actualReceiver: to } },
+        { status: 400 }
+      );
+    }
+
+    const exp = expectedAmount(kind, packSize);
+    if (amount !== exp) {
+      return NextResponse.json(
+        { error: "Wrong amount", details: { expected: exp.toString(), actual: amount.toString(), kind, packSize } },
         { status: 400 }
       );
     }
@@ -145,182 +130,70 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2) Payment intent betöltés (preferált: paymentId alapján)
-    let payment: {
-      id: string;
-      fid: number;
-      kind: "extra_picks" | "og_rank";
-      pack_size: 1 | 5 | 10 | null;
-      tx_hash: string | null;
-      status: string | null;
-    } | null = null;
-
-    if (typeof paymentId === "string" && paymentId.length > 0) {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("id,fid,kind,pack_size,tx_hash,status")
-        .eq("id", paymentId)
-        .maybeSingle();
-
-      if (error || !data) {
-        return NextResponse.json({ error: "Payment intent not found", details: error ?? null }, { status: 400 });
-      }
-      payment = data as any;
-    } else {
-      // Legacy fallback: fid/kind/(packSize) alapján megpróbálunk találni egy pending-et
-      const fid = (body as any)?.fid;
-      const kind = (body as any)?.kind as "extra_picks" | "og_rank" | undefined;
-      const packSize = (body as any)?.packSize as 1 | 5 | 10 | undefined;
-
-      if (!fid || !Number.isFinite(fid) || !kind) {
-        return NextResponse.json(
-          { error: "Missing paymentId. Legacy mode requires fid + kind (+ packSize for extra_picks)." },
-          { status: 400 }
-        );
-      }
-
-      const q = supabase
-        .from("payments")
-        .select("id,fid,kind,pack_size,tx_hash,status")
-        .eq("fid", fid)
-        .eq("kind", kind)
-        .in("status", ["pending", "processing"]); // allow retry
-
-      const { data, error } =
-        kind === "extra_picks"
-          ? await q.eq("pack_size", packSize ?? null).order("created_at", { ascending: false }).maybeSingle()
-          : await q.order("created_at", { ascending: false }).maybeSingle();
-
-      if (error || !data) {
-        return NextResponse.json({ error: "No matching pending payment found (legacy mode)" }, { status: 400 });
-      }
-      payment = data as any;
-    }
-
-    // 3) Idempotencia: ha már completed, ok (ne kreditezzen duplán)
-    if (payment.status === "completed") {
-      // ha van eltérés tx-ben, jelezzük
-      if (payment.tx_hash && payment.tx_hash.toLowerCase() !== txHash.toLowerCase()) {
-        return NextResponse.json(
-          { error: "Payment already completed with a different txHash", details: { existing: payment.tx_hash, incoming: txHash } },
-          { status: 409 }
-        );
-      }
-      return NextResponse.json({ ok: true, alreadyCompleted: true, txHash });
-    }
-
-    // 4) Ellenőrizd a várt amountot a payment alapján (ne body-ból!)
-    const kind = payment.kind;
-    const packSize = payment.pack_size ?? undefined;
-
-    const exp = expectedAmountFrom(kind, packSize);
-    if (amount !== exp) {
-      return NextResponse.json(
-        {
-          error: "Wrong amount",
-          details: {
-            expected: exp.toString(),
-            actual: amount.toString(),
-            kind,
-            packSize: packSize ?? null,
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    // 5) Lock: állítsuk "processing"-re + tx_hash set, hogy retry alatt se legyen dupla credit
-    // Csak akkor lockolunk, ha:
-    // - status pending VAGY processing (retry)
-    // - ha tx_hash már be van állítva, akkor egyezzen
-    if (payment.tx_hash && payment.tx_hash.toLowerCase() !== txHash.toLowerCase()) {
-      return NextResponse.json(
-        { error: "Payment already has a different txHash", details: { existing: payment.tx_hash, incoming: txHash } },
-        { status: 409 }
-      );
-    }
-
-    // próbáljunk lockolni: pending -> processing (vagy processing marad)
-    const { data: lockData, error: lockErr } = await supabase
-      .from("payments")
-      .update({
-        status: "processing",
-        tx_hash: txHash,
-        updated_at: nowIso(),
-      })
-      .eq("id", payment.id)
-      .in("status", ["pending", "processing"])
-      .select("id,status,tx_hash")
-      .maybeSingle();
-
-    if (lockErr || !lockData) {
-      return NextResponse.json(
-        { error: "Failed to lock payment for settlement", details: lockErr ?? null },
-        { status: 500 }
-      );
-    }
-
-    // 6) Kredit logika (exactly-once a "processing lock" miatt)
+    // --- DB credit ---
     if (kind === "extra_picks") {
-      if (!packSize) {
-        return NextResponse.json({ error: "Payment missing pack_size for extra_picks" }, { status: 500 });
-      }
+      const add = packSize ?? 0;
 
       const { data: stats, error: sErr } = await supabase
         .from("user_stats")
         .select("fid, extra_picks_remaining")
-        .eq("fid", payment.fid)
+        .eq("fid", fid)
         .maybeSingle();
 
       if (sErr || !stats) {
         return NextResponse.json({ error: "User stats missing" }, { status: 500 });
       }
 
-      const current = Number(stats.extra_picks_remaining ?? 0);
-      const next = current + Number(packSize);
+      const current = Number((stats as any).extra_picks_remaining ?? 0);
+      const next = current + add;
 
       const { error: uErr } = await supabase
         .from("user_stats")
-        .update({ extra_picks_remaining: next, updated_at: nowIso() })
-        .eq("fid", payment.fid);
+        .update({ extra_picks_remaining: next, updated_at: new Date().toISOString() })
+        .eq("fid", fid);
 
-      if (uErr) {
-        return NextResponse.json({ error: "Failed to credit picks", details: uErr }, { status: 500 });
-      }
+      if (uErr) return NextResponse.json({ error: "Failed to credit picks", details: uErr }, { status: 500 });
 
-      // véglegesítés
-      const { error: finErr } = await supabase
+      await supabase
         .from("payments")
-        .update({ status: "completed", updated_at: nowIso() })
-        .eq("id", payment.id)
-        .eq("tx_hash", txHash);
+        .update({ status: "completed", tx_hash: txHash, updated_at: new Date().toISOString() })
+        .eq("fid", fid)
+        .eq("kind", "extra_picks")
+        .eq("pack_size", packSize ?? null)
+        .eq("status", "pending");
 
-      if (finErr) {
-        return NextResponse.json({ error: "Failed to finalize payment", details: finErr }, { status: 500 });
-      }
-
-      return NextResponse.json({ ok: true, credited: Number(packSize), txHash });
+      return NextResponse.json({ ok: true, credited: add, txHash });
     }
 
     if (kind === "og_rank") {
-      const { error: uErr } = await supabase
-        .from("users")
-        .update({ is_og: true })
-        .eq("fid", payment.fid);
+      // 1) OG flag
+      const { error: uErr } = await supabase.from("users").update({ is_og: true }).eq("fid", fid);
+      if (uErr) return NextResponse.json({ error: "Failed to set OG", details: uErr }, { status: 500 });
 
-      if (uErr) {
-        return NextResponse.json({ error: "Failed to set OG", details: uErr }, { status: 500 });
+      // 2) ✅ Instant OG bonus: +1 free pick now, BUT capped at 2 (so no “3 free picks”)
+      const { data: stats, error: sErr } = await supabase
+        .from("user_stats")
+        .select("fid, free_picks_remaining, next_free_pick_at")
+        .eq("fid", fid)
+        .maybeSingle();
+
+      if (!sErr && stats) {
+        const currentFree = Number((stats as any).free_picks_remaining ?? 0);
+        const capped = Math.min(2, currentFree + 1); // +1 now, max 2
+        if (capped !== currentFree) {
+          await supabase
+            .from("user_stats")
+            .update({ free_picks_remaining: capped, updated_at: new Date().toISOString() })
+            .eq("fid", fid);
+        }
       }
 
-      const { error: finErr } = await supabase
+      await supabase
         .from("payments")
-        .update({ status: "completed", updated_at: nowIso() })
-        .eq("id", payment.id)
-        .eq("tx_hash", txHash);
-
-      if (finErr) {
-        return NextResponse.json({ error: "Failed to finalize payment", details: finErr }, { status: 500 });
-      }
+        .update({ status: "completed", tx_hash: txHash, updated_at: new Date().toISOString() })
+        .eq("fid", fid)
+        .eq("kind", "og_rank")
+        .eq("status", "pending");
 
       return NextResponse.json({ ok: true, txHash });
     }
