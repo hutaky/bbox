@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
 
+// árak (human) – envből
 const PRICE_1 = String(process.env.BBOX_EXTRA_PRICE_1 || "0.5");
 const PRICE_5 = String(process.env.BBOX_EXTRA_PRICE_5 || "2.0");
 const PRICE_10 = String(process.env.BBOX_EXTRA_PRICE_10 || "3.5");
@@ -19,12 +20,19 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+// ennyi idő után a pending-et elengedjük (ne ragadjon be)
+const PENDING_TTL_MINUTES = 10;
+
 type Body = { fid: number; packSize: 1 | 5 | 10 };
 
 function getPrice(packSize: 1 | 5 | 10) {
   if (packSize === 1) return PRICE_1;
   if (packSize === 5) return PRICE_5;
   return PRICE_10;
+}
+
+function minutesAgoIso(min: number) {
+  return new Date(Date.now() - min * 60 * 1000).toISOString();
 }
 
 export async function POST(req: Request) {
@@ -37,22 +45,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing fid or packSize" }, { status: 400 });
     }
 
-    // extra debug: env check
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json(
-        {
-          error: "Server misconfigured (missing Supabase env)",
-          details: {
-            hasUrl: Boolean(SUPABASE_URL),
-            hasServiceRoleKey: Boolean(SUPABASE_SERVICE_ROLE_KEY),
-          },
-        },
-        { status: 500 }
-      );
-    }
-
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json({ error: "Server misconfigured (missing pay env)" }, { status: 500 });
+      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
     }
 
     if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
@@ -62,44 +56,43 @@ export async function POST(req: Request) {
       );
     }
 
+    // 0) Régi pending-ek lejáratása (hogy ne ragadjon be)
+    // (csak azok, ahol még nincs tx_hash)
+    await supabase
+      .from("payments")
+      .update({ status: "expired", updated_at: new Date().toISOString() })
+      .eq("fid", fid)
+      .eq("kind", "extra_picks")
+      .eq("status", "pending")
+      .is("tx_hash", null)
+      .lt("created_at", minutesAgoIso(PENDING_TTL_MINUTES));
+
     const priceHuman = getPrice(packSize);
-    const amount = parseUnits(priceHuman, 6).toString();
+
+    // USDC decimals = 6 → base units string kell a sendToken-nak
+    const amountUnits = parseUnits(priceHuman, 6).toString();
+
+    // CAIP-19 asset id (Base + ERC20)
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    const { data, error: insertError } = await supabase
-      .from("payments")
-      .insert({
-        fid,
-        kind: "extra_picks",
-        pack_size: packSize,
-        frame_id: null,
-        status: "pending",
-      })
-      .select("id")
-      .single();
+    // 1) új pending payment record (mindig engedjük, ne blokkoljon)
+    const { error: insertError } = await supabase.from("payments").insert({
+      fid,
+      kind: "extra_picks",
+      pack_size: packSize,
+      frame_id: null,
+      tx_hash: null,
+      status: "pending",
+    });
 
-    if (insertError || !data?.id) {
-      console.error("payments insert error:", insertError);
-      return NextResponse.json(
-        {
-          error: "Failed to create payment intent",
-          details: {
-            message: insertError?.message ?? null,
-            code: (insertError as any)?.code ?? null,
-            hint: (insertError as any)?.hint ?? null,
-            details: (insertError as any)?.details ?? null,
-          },
-        },
-        { status: 500 }
-      );
-    }
+    if (insertError) console.error("payments insert error:", insertError);
 
     return NextResponse.json({
-      paymentId: data.id,
       token,
-      amount,
+      amount: amountUnits,
       recipientAddress: RECEIVER_ADDRESS,
       packSize,
+      details: { priceHuman, decimals: 6, chainId: 8453, pendingTtlMinutes: PENDING_TTL_MINUTES },
     });
   } catch (e: any) {
     console.error("Error in /api/pay/extra:", e);
