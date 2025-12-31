@@ -1,5 +1,7 @@
+// src/app/api/pick/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +19,19 @@ export async function POST(req: Request) {
     if (!Number.isFinite(boxIndex) || boxIndex < 0 || boxIndex > 2) {
       return NextResponse.json({ error: "Invalid boxIndex" }, { status: 400 });
     }
+
+    // ✅ Rate limit (abuse védelem)
+    // Pick: elég szigorú
+    // - IP: 30 / perc
+    // - FID: 12 / perc
+    const rl = await enforceRateLimit(req, {
+      action: "pick",
+      fid,
+      windowSeconds: 60,
+      ipLimit: 30,
+      fidLimit: 12,
+    });
+    if (rl) return rl;
 
     // Atomikus DB művelet
     const { data, error } = await supabaseAdmin.rpc("open_bbox", {
