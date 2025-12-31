@@ -191,6 +191,10 @@ export default function HomePage() {
   const [buyError, setBuyError] = useState<string | null>(null);
   const [buyInfo, setBuyInfo] = useState<string | null>(null);
 
+  // opening animáció trigger
+  const [openAnimIndex, setOpenAnimIndex] = useState<number | null>(null);
+  const openAnimTimerRef = useRef<number | null>(null);
+
   const mountedRef = useRef(true);
 
   async function loadUserState(
@@ -246,7 +250,8 @@ export default function HomePage() {
           context?.frameData?.user ??
           null;
 
-        const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
+        const ctxFid: number | null =
+          ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
           username:
@@ -255,7 +260,11 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
+          pfpUrl:
+            ctxUser?.pfpUrl ??
+            ctxUser?.pfp_url ??
+            ctxUser?.pfp?.url ??
+            null,
         };
 
         const queryFid = getFidFromQuery();
@@ -282,6 +291,10 @@ export default function HomePage() {
     return () => {
       cancelled = true;
       mountedRef.current = false;
+      if (openAnimTimerRef.current) {
+        window.clearTimeout(openAnimTimerRef.current);
+        openAnimTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -291,28 +304,41 @@ export default function HomePage() {
       setCountdown("Ready");
       return;
     }
-    const interval = setInterval(() => {
+    const interval = window.setInterval(() => {
       setCountdown(formatCountdown(user.nextFreePickAt));
     }, 1000);
-    return () => clearInterval(interval);
+    return () => window.clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
   const canPick =
-    (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+    (user?.freePicksRemaining ?? 0) > 0 ||
+    (user?.extraPicksRemaining ?? 0) > 0;
 
   const isOg = Boolean(user?.isOg);
   const freePicks = Number(user?.freePicksRemaining ?? 0);
   const extraPicks = Number(user?.extraPicksRemaining ?? 0);
 
+  function startOpenAnim(index: number) {
+    setOpenAnimIndex(index);
+    if (openAnimTimerRef.current) window.clearTimeout(openAnimTimerRef.current);
+    openAnimTimerRef.current = window.setTimeout(() => {
+      setOpenAnimIndex(null);
+      openAnimTimerRef.current = null;
+    }, 520);
+  }
+
   // ---- Pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
     const canNowPick =
-      (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+      (user?.freePicksRemaining ?? 0) > 0 ||
+      (user?.extraPicksRemaining ?? 0) > 0;
     if (!canNowPick) return;
 
     try {
       setPicking(true);
+      startOpenAnim(boxIndex);
+
       const res = await fetch("/api/pick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -364,7 +390,7 @@ export default function HomePage() {
 
     const rarityLabel = lastResult.rarity.toLowerCase();
 
-    // ✅ szebb, “hype”-osabb copy + nincs vercel domain
+    // ✅ ütősebb copy (rövid, mobilbarát)
     const text =
       `🎁 Pulled a ${rarityLabel} box on BBOX (+${lastResult.points} pts)\n\n` +
       `Come open your daily boxes 👇`;
@@ -410,7 +436,9 @@ export default function HomePage() {
       const recipientAddress = data?.recipientAddress as string | undefined;
 
       if (!token || !amount || !recipientAddress) {
-        setBuyError(buildPayDebugMessage("Invalid payment payload from server.", data));
+        setBuyError(
+          buildPayDebugMessage("Invalid payment payload from server.", data)
+        );
         setBuyLoading(false);
         return;
       }
@@ -460,14 +488,17 @@ export default function HomePage() {
       const settleData = await settleRes.json().catch(() => ({}));
       if (!settleRes.ok) {
         if (isWrongAmountLike(settleData)) {
-          const label = packSize === 1 ? "1-pack" : packSize === 5 ? "5-pack" : "10-pack";
+          const label =
+            packSize === 1 ? "1-pack" : packSize === 5 ? "5-pack" : "10-pack";
           setBuyInfo(donationInfoText(label));
           setBuyError(null);
           setBuyLoading(false);
           return;
         }
 
-        setBuyError(buildPayDebugMessage("Payment sent, but verification failed.", settleData));
+        setBuyError(
+          buildPayDebugMessage("Payment sent, but verification failed.", settleData)
+        );
         setBuyLoading(false);
         return;
       }
@@ -483,7 +514,11 @@ export default function HomePage() {
       setShowBuyModal(false);
     } catch (err: any) {
       console.error("handleBuyExtra error:", err);
-      setBuyError(buildPayDebugMessage("Something went wrong.", { error: String(err?.message ?? err) }));
+      setBuyError(
+        buildPayDebugMessage("Something went wrong.", {
+          error: String(err?.message ?? err),
+        })
+      );
       setBuyLoading(false);
     }
   }
@@ -522,7 +557,9 @@ export default function HomePage() {
       const recipientAddress = data?.recipientAddress as string | undefined;
 
       if (!token || !amount || !recipientAddress) {
-        setBuyError(buildPayDebugMessage("Invalid OG payment payload from server.", data));
+        setBuyError(
+          buildPayDebugMessage("Invalid OG payment payload from server.", data)
+        );
         setBuyLoading(false);
         return;
       }
@@ -586,7 +623,9 @@ export default function HomePage() {
           return;
         }
 
-        setBuyError(buildPayDebugMessage("Payment sent, but verification failed.", settleData));
+        setBuyError(
+          buildPayDebugMessage("Payment sent, but verification failed.", settleData)
+        );
         setBuyLoading(false);
         return;
       }
@@ -602,7 +641,11 @@ export default function HomePage() {
       setShowOgModal(false);
     } catch (err: any) {
       console.error("handleBuyOg error:", err);
-      setBuyError(buildPayDebugMessage("Something went wrong.", { error: String(err?.message ?? err) }));
+      setBuyError(
+        buildPayDebugMessage("Something went wrong.", {
+          error: String(err?.message ?? err),
+        })
+      );
       setBuyLoading(false);
     }
   }
@@ -626,13 +669,21 @@ export default function HomePage() {
     const baseClass = "px-2 py-1 rounded-full text-xs font-semibold border";
     switch (rarity) {
       case "COMMON":
-        return <span className={`${baseClass} border-gray-500 text-gray-200`}>COMMON</span>;
+        return (
+          <span className={`${baseClass} border-gray-500 text-gray-200`}>
+            COMMON
+          </span>
+        );
       case "RARE":
         return <span className={`${baseClass} border-rare text-rare`}>RARE</span>;
       case "EPIC":
         return <span className={`${baseClass} border-epic text-epic`}>EPIC</span>;
       case "LEGENDARY":
-        return <span className={`${baseClass} border-legendary text-legendary`}>LEGENDARY</span>;
+        return (
+          <span className={`${baseClass} border-legendary text-legendary`}>
+            LEGENDARY
+          </span>
+        );
     }
   }
 
@@ -690,11 +741,15 @@ export default function HomePage() {
             )}
 
             <div className="text-right min-w-0">
-              <div className="text-sm font-medium truncate max-w-[150px]">{displayName}</div>
+              <div className="text-sm font-medium truncate max-w-[150px]">
+                {displayName}
+              </div>
               <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
                 {isOg ? (
                   <>
-                    <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">BOX</span>
+                    <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">
+                      BOX
+                    </span>
                     <AnimatedOgPill />
                   </>
                 ) : (
@@ -714,18 +769,26 @@ export default function HomePage() {
             <div className="flex-1 min-w-0">
               <div className="flex justify-between text-[11px] text-[#A6B0FF]/80">
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
-                <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
+                <span className="font-semibold text-[13px] text-[#E6EBFF]">
+                  {user?.totalPoints ?? 0}
+                </span>
               </div>
 
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
-                <span className="font-medium text-emerald-300">{extraPicks}</span>
+                <span className="font-medium text-emerald-300">
+                  {extraPicks}
+                </span>
               </div>
 
               <div className="mt-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-[#B0BBFF]/80">Free picks:</span>
-                  <span className={`text-sm font-semibold ${isOg ? "text-purple-200" : "text-sky-300"} shrink-0`}>
+                  <span
+                    className={`text-sm font-semibold ${
+                      isOg ? "text-purple-200" : "text-sky-300"
+                    } shrink-0`}
+                  >
                     {freePicks}
                   </span>
                 </div>
@@ -734,12 +797,18 @@ export default function HomePage() {
               <div className="text-[11px] mt-2 flex items-start justify-between gap-2 text-[#A6B0FF]/80">
                 <span className="shrink-0">Next free box:</span>
                 <div className="text-right">
-                  <div className={`font-semibold ${isOg ? "text-purple-200" : "text-emerald-300"}`}>
+                  <div
+                    className={`font-semibold ${
+                      isOg ? "text-purple-200" : "text-emerald-300"
+                    }`}
+                  >
                     {countdown || "Ready"}
                   </div>
 
                   {isOg ? (
-                    <div className="mt-1 text-[10px] text-purple-200/90">+1 extra box as OG</div>
+                    <div className="mt-1 text-[10px] text-purple-200/90">
+                      +1 extra box as OG
+                    </div>
                   ) : (
                     <button
                       onClick={() => {
@@ -761,7 +830,9 @@ export default function HomePage() {
                 <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">
                   {isOg ? "BOX OG" : "BOX Based"}
                 </div>
-                <div className="text-xs font-semibold text-[#F4F0FF]">{league}</div>
+                <div className="text-xs font-semibold text-[#F4F0FF]">
+                  {league}
+                </div>
               </div>
 
               <button
@@ -782,7 +853,9 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
+              Wait until the timer hits{" "}
+              <span className="font-semibold">Ready</span> or buy extra picks to
+              keep opening today.
             </p>
           </div>
         )}
@@ -791,49 +864,63 @@ export default function HomePage() {
         <section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-medium">Pick your box</h2>
-            <span className="text-[11px] text-gray-400">One pick = one opening</span>
+            <span className="text-[11px] text-gray-400">
+              One pick = one opening
+            </span>
           </div>
 
           <div className="grid grid-cols-3 gap-3 mb-4">
-            {[0, 1, 2].map((index) => (
-              <button
-                key={index}
-                onClick={() => handlePick(index)}
-                disabled={!canPick || picking}
-                className={`group relative aspect-square rounded-2xl overflow-hidden border transition-all duration-300
-                  ${
-                    !canPick || picking
-                      ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] cursor-not-allowed opacity-60"
-                      : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
-                  }`}
-              >
-                {/* ✅ visszatettük a hover overlayeket + NINCS rossz </div> */}
-                <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/25 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
+            {[0, 1, 2].map((index) => {
+              const isOpening = openAnimIndex === index && picking;
+              return (
+                <button
+                  key={index}
+                  onClick={() => handlePick(index)}
+                  disabled={!canPick || picking}
+                  className={`group relative aspect-square rounded-2xl overflow-hidden border transition-all duration-300
+                    ${
+                      !canPick || picking
+                        ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] cursor-not-allowed opacity-60"
+                        : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
+                    }`}
+                >
+                  {/* hover overlayek */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/25 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
 
-                <div className="relative z-10 h-full flex items-center justify-center">
-<img
-  src="/pick.png"
-  alt="open BBOX"
-  className="
-    w-[90%] h-[90%] max-w-[330px] max-h-[330px]
-    object-contain
-    drop-shadow-[0_0_35px_rgba(124,58,237,0.65)]
-    transition-transform duration-300
-    group-hover:scale-110
-  "
-/>
-                </div>
+                  {/* ✅ FULL FILL + OPENING ANIM (scale + blur + fade-in) */}
+                  <div className="absolute inset-0 z-10 flex items-center justify-center">
+                    <img
+                      src="/pick.png"
+                      alt="open BBOX"
+                      className={[
+                        "w-full h-full p-4 object-contain",
+                        "drop-shadow-[0_0_60px_rgba(124,58,237,0.85)]",
+                        "transition-all duration-500 ease-out",
+                        "group-hover:scale-110",
+                        isOpening
+                          ? "scale-[1.22] blur-[2px] opacity-0"
+                          : "scale-100 blur-0 opacity-100",
+                      ].join(" ")}
+                    />
+                  </div>
 
-                <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
-                  <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
-                </div>
-              </button>
-            ))}
+                  <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
+                    <span className="text-[11px] text-gray-300 group-hover:text-white transition">
+                      Tap to open
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           <button
-            onClick={() => (canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true))}
+            onClick={() =>
+              canPick
+                ? handlePick(Math.floor(Math.random() * 3))
+                : setShowBuyModal(true)
+            }
             disabled={picking}
             className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
               ${
@@ -876,12 +963,18 @@ export default function HomePage() {
               ✕
             </button>
             <div className="text-center mt-2">
-              <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
+              <div className="mb-3 flex justify-center">
+                {renderRarityBadge(lastResult.rarity)}
+              </div>
               <h3 className="text-sm font-semibold mb-2">
                 You opened a {renderRarityLabel(lastResult.rarity)}!
               </h3>
-              <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
-              <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
+              <p className="text-lg font-bold text-[#00C2FF] mb-1">
+                Reward: +{lastResult.points} points
+              </p>
+              <p className="text-xs text-gray-400 mb-4">
+                Keep opening boxes to climb the leaderboard.
+              </p>
               <button
                 onClick={handleShareResult}
                 className="w-full py-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#00C2FF] hover:brightness-110 text-xs font-semibold mb-2"
@@ -916,13 +1009,16 @@ export default function HomePage() {
 
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
-              <p className="text-[11px] text-gray-400">This opens a native Farcaster wallet confirmation.</p>
+              <p className="text-[11px] text-gray-400">
+                This opens a native Farcaster wallet confirmation.
+              </p>
             </div>
 
             <div className="mb-3 rounded-2xl border border-[#1C2348] bg-[#070B2A]/40 px-3 py-2">
               <p className="text-[11px] text-gray-300 leading-snug">
-                Heads up: If you change the amount in the wallet screen, no picks will be added. The transfer will be
-                treated as a donation — thanks for supporting BBOX 💙
+                Heads up: If you change the amount in the wallet screen, no picks
+                will be added. The transfer will be treated as a donation —
+                thanks for supporting BBOX 💙
               </p>
             </div>
 
@@ -933,7 +1029,9 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5"} USDC</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5"} USDC
+                </span>
               </button>
 
               <button
@@ -942,7 +1040,9 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0"} USDC</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0"} USDC
+                </span>
               </button>
 
               <button
@@ -951,23 +1051,33 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5"} USDC</span>
+                <span className="text-gray-300">
+                  {process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5"} USDC
+                </span>
               </button>
             </div>
 
             {buyInfo && (
               <div className="mt-3 text-[11px] text-emerald-200">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">
+                  {buyInfo}
+                </pre>
               </div>
             )}
 
             {buyError && (
               <div className="mt-3 text-[11px] text-red-300">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">
+                  {buyError}
+                </pre>
               </div>
             )}
 
-            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>}
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Waiting for confirmation…
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -988,9 +1098,12 @@ export default function HomePage() {
             </button>
 
             <div className="mt-1 mb-3">
-              <h3 className="text-sm font-semibold mb-1 text-center">Become OG</h3>
+              <h3 className="text-sm font-semibold mb-1 text-center">
+                Become OG
+              </h3>
               <p className="text-[11px] text-gray-400 text-center">
-                One-time purchase, FID-bound. OGs get a permanent daily buff and a unique badge in BBOX.
+                One-time purchase, FID-bound. OGs get a permanent daily buff and
+                a unique badge in BBOX.
               </p>
             </div>
 
@@ -1006,7 +1119,11 @@ export default function HomePage() {
                     : "bg-purple-700 hover:bg-purple-600 text-white"
                 }`}
             >
-              {user?.isOg ? "You’re already OG ✅" : `Become OG (${process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)`}
+              {user?.isOg
+                ? "You’re already OG ✅"
+                : `Become OG (${
+                    process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"
+                  } USDC)`}
             </button>
 
             <button
@@ -1018,17 +1135,25 @@ export default function HomePage() {
 
             {buyInfo && (
               <div className="mt-3 text-[11px] text-emerald-200">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">
+                  {buyInfo}
+                </pre>
               </div>
             )}
 
             {buyError && (
               <div className="mt-3 text-[11px] text-red-300">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">
+                  {buyError}
+                </pre>
               </div>
             )}
 
-            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>}
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Waiting for confirmation…
+              </p>
+            )}
           </div>
         </div>
       )}
