@@ -64,6 +64,17 @@ function buildPayDebugMessage(fallback: string, data: any): string {
   return `${base}\n\n[debug]\n${parts.join("\n")}`.trim();
 }
 
+function extractSendTokenError(result: any): string {
+  // SendTokenResult típusváltozatok miatt defensive (a reason nem garantált)
+  const reason = typeof result?.reason === "string" ? result.reason : "unknown";
+  const message =
+    result?.error?.message ??
+    result?.message ??
+    (typeof result === "string" ? result : "");
+  const combined = `${reason} ${message}`.trim();
+  return combined || "unknown";
+}
+
 export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
@@ -124,7 +135,6 @@ export default function HomePage() {
       }
 
       try {
-        // Mini App SDK context (különböző hostokban változhat a shape)
         const context: any = await (sdk as any).context;
 
         const ctxUser =
@@ -258,10 +268,9 @@ export default function HomePage() {
 
   /**
    * NATÍV fizetés Mini App SDK-val:
-   * - backend visszaadja: token (CAIP-19), amount (base units), recipientAddress
-   * - itt meghívjuk: sdk.actions.sendToken(...)
-   * - visszakapjuk: tx hash (send.transaction)
-   * - majd /api/pay/settle validál + jóváír
+   * - backend visszaadja: paymentId + token (CAIP-19), amount (base units), recipientAddress
+   * - sdk.actions.sendToken(...)
+   * - tx hash -> /api/pay/settle (paymentId + txHash)
    */
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
@@ -286,40 +295,28 @@ export default function HomePage() {
         return;
       }
 
-      // Kompatibilitás: ha még tx-t küld a backend, adjunk értelmes hibát
-      if (data?.tx && !data?.token) {
-        setBuyError(
-          buildPayDebugMessage(
-            "Backend still returns tx payload. Update /api/pay/* to return { token, amount, recipientAddress } for sendToken.",
-            data
-          )
-        );
-        setBuyLoading(false);
-        return;
-      }
-
+      const paymentId = data?.paymentId as string | undefined;
       const token = data?.token as string | undefined;
       const amount = data?.amount as string | undefined;
       const recipientAddress = data?.recipientAddress as string | undefined;
 
-      if (!token || !amount || !recipientAddress) {
+      if (!paymentId || !token || !amount || !recipientAddress) {
         setBuyError(buildPayDebugMessage("Invalid payment payload from server.", data));
         setBuyLoading(false);
         return;
       }
 
-      const result = await sdk.actions.sendToken({
+      const result: any = await sdk.actions.sendToken({
         token,
         amount,
         recipientAddress,
       });
 
       if (!result?.success) {
-        const r: any = result;
         setBuyError(
           buildPayDebugMessage("Transaction cancelled or failed.", {
             error: "Transaction cancelled or failed.",
-            sdkDebug: `${r?.reason ?? ""} ${r?.error?.message ?? r?.message ?? ""}`.trim() || "unknown",
+            sdkDebug: extractSendTokenError(result),
             details: result,
           })
         );
@@ -327,17 +324,28 @@ export default function HomePage() {
         return;
       }
 
-      const txHash = result.send.transaction;
+      // defensive txHash extract
+      const txHash =
+        result?.send?.transaction ??
+        result?.transaction ??
+        result?.txHash ??
+        null;
+
+      if (!txHash || typeof txHash !== "string") {
+        setBuyError(
+          buildPayDebugMessage("Payment confirmed, but missing tx hash from wallet.", {
+            error: "Missing tx hash from sendToken result.",
+            details: result,
+          })
+        );
+        setBuyLoading(false);
+        return;
+      }
 
       const settleRes = await fetch("/api/pay/settle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fid,
-          kind: "extra_picks",
-          packSize,
-          txHash,
-        }),
+        body: JSON.stringify({ paymentId, txHash }),
         cache: "no-store",
       });
 
@@ -386,39 +394,28 @@ export default function HomePage() {
         return;
       }
 
-      if (data?.tx && !data?.token) {
-        setBuyError(
-          buildPayDebugMessage(
-            "Backend still returns tx payload. Update /api/pay/* to return { token, amount, recipientAddress } for sendToken.",
-            data
-          )
-        );
-        setBuyLoading(false);
-        return;
-      }
-
+      const paymentId = data?.paymentId as string | undefined;
       const token = data?.token as string | undefined;
       const amount = data?.amount as string | undefined;
       const recipientAddress = data?.recipientAddress as string | undefined;
 
-      if (!token || !amount || !recipientAddress) {
+      if (!paymentId || !token || !amount || !recipientAddress) {
         setBuyError(buildPayDebugMessage("Invalid OG payment payload from server.", data));
         setBuyLoading(false);
         return;
       }
 
-      const result = await sdk.actions.sendToken({
+      const result: any = await sdk.actions.sendToken({
         token,
         amount,
         recipientAddress,
       });
 
       if (!result?.success) {
-        const r: any = result;
         setBuyError(
           buildPayDebugMessage("Transaction cancelled or failed.", {
             error: "Transaction cancelled or failed.",
-            sdkDebug: `${r?.reason ?? ""} ${r?.error?.message ?? r?.message ?? ""}`.trim() || "unknown",
+            sdkDebug: extractSendTokenError(result),
             details: result,
           })
         );
@@ -426,16 +423,27 @@ export default function HomePage() {
         return;
       }
 
-      const txHash = result.send.transaction;
+      const txHash =
+        result?.send?.transaction ??
+        result?.transaction ??
+        result?.txHash ??
+        null;
+
+      if (!txHash || typeof txHash !== "string") {
+        setBuyError(
+          buildPayDebugMessage("Payment confirmed, but missing tx hash from wallet.", {
+            error: "Missing tx hash from sendToken result.",
+            details: result,
+          })
+        );
+        setBuyLoading(false);
+        return;
+      }
 
       const settleRes = await fetch("/api/pay/settle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fid,
-          kind: "og_rank",
-          txHash,
-        }),
+        body: JSON.stringify({ paymentId, txHash }),
         cache: "no-store",
       });
 
@@ -550,7 +558,8 @@ export default function HomePage() {
             )}
             <div className="text-right">
               <div className="text-sm font-medium truncate max-w-[120px]">{displayName}</div>
-              <div className="text-[11px] text-[#F4F0FF]/80`}>{rankLabel}</div>
+              {/* FIX: backtick typo removed */}
+              <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
         </header>
@@ -733,7 +742,7 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+1 extra pick</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5 USDC"}</span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_EXTRA_PRICE_1 ?? "0.5"} USDC</span>
               </button>
 
               <button
@@ -742,7 +751,7 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+5 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0 USDC"}</span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_EXTRA_PRICE_5 ?? "2.0"} USDC</span>
               </button>
 
               <button
@@ -751,7 +760,7 @@ export default function HomePage() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
               >
                 <span>+10 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5 USDC"}</span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_EXTRA_PRICE_10 ?? "3.5"} USDC</span>
               </button>
             </div>
 
@@ -776,9 +785,7 @@ export default function HomePage() {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Waiting for confirmation…
-              </p>
+              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
             )}
           </div>
         </div>
@@ -827,9 +834,7 @@ export default function HomePage() {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Waiting for confirmation…
-              </p>
+              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
             )}
           </div>
         </div>
