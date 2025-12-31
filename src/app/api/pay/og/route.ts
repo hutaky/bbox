@@ -28,40 +28,24 @@ export async function POST(req: Request) {
     }
 
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
-    }
-
-    if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
       return NextResponse.json(
-        { error: "Invalid RECEIVER/USDC address", details: { RECEIVER_ADDRESS, USDC_CONTRACT } },
+        { error: "Server misconfigured (missing env)" },
         { status: 500 }
       );
     }
 
-    const amountUnits = parseUnits(OG_PRICE, 6).toString();
+    if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
+      return NextResponse.json(
+        {
+          error: "Invalid RECEIVER/USDC address",
+          details: { RECEIVER_ADDRESS, USDC_CONTRACT },
+        },
+        { status: 500 }
+      );
+    }
+
+    // USDC (6 decimals)
+    const amount = parseUnits(OG_PRICE, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    const { error: insertError } = await supabase.from("payments").insert({
-      fid,
-      kind: "og_rank",
-      pack_size: null,
-      frame_id: null,
-      status: "pending",
-    });
-
-    if (insertError) console.error("payments insert OG error:", insertError);
-
-    return NextResponse.json({
-      token,
-      amount: amountUnits,
-      recipientAddress: RECEIVER_ADDRESS,
-      details: { priceHuman: OG_PRICE, decimals: 6, chainId: 8453 },
-    });
-  } catch (e: any) {
-    console.error("Error in /api/pay/og:", e);
-    return NextResponse.json(
-      { error: "Internal server error", details: String(e?.message ?? e) },
-      { status: 500 }
-    );
-  }
-}
+    // ⚠️ pending payme
