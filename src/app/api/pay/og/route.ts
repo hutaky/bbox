@@ -2,8 +2,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isAddress, parseUnits } from "viem";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
 const USDC_CONTRACT = process.env.NEYNAR_USDC_CONTRACT!;
@@ -24,19 +27,37 @@ type Body = { fid: number };
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
-    const fid = body?.fid;
+    const fid = Number(body?.fid);
 
     if (!fid || !Number.isFinite(fid)) {
       return NextResponse.json({ error: "Missing fid" }, { status: 400 });
     }
 
+    // ✅ Rate limit (OG purchase init)
+    // - IP: 8 / perc
+    // - FID: 3 / perc
+    const rl = await enforceRateLimit(req, {
+      action: "pay_og",
+      fid,
+      windowSeconds: 60,
+      ipLimit: 8,
+      fidLimit: 3,
+    });
+    if (rl) return rl;
+
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Server misconfigured (missing env)" },
+        { status: 500 }
+      );
     }
 
     if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
       return NextResponse.json(
-        { error: "Invalid RECEIVER/USDC address", details: { RECEIVER_ADDRESS, USDC_CONTRACT } },
+        {
+          error: "Invalid RECEIVER/USDC address",
+          details: { RECEIVER_ADDRESS, USDC_CONTRACT },
+        },
         { status: 500 }
       );
     }
@@ -54,10 +75,7 @@ export async function POST(req: Request) {
     }
 
     // 1) Azonnali “unstick”: zárjunk le minden nyitott pending OG rekordot
-    //    amihez még nincs frame_id (txHash). Így megszakadt vásárlás után is
-    //    azonnal tud újra próbálkozni.
-    //
-    // NOTE: ha nálatok nincs 'cancelled' status, cseréld 'expired'-re.
+    //    amihez még nincs frame_id (txHash).
     await supabase
       .from("payments")
       .update({ status: "cancelled", updated_at: new Date().toISOString() })
@@ -84,23 +102,26 @@ export async function POST(req: Request) {
       // nem blokkoljuk — settle txHash alapján úgyis érvényesít
     }
 
-    return NextResponse.json({
-      token,
-      amount: amountUnits,
-      recipientAddress: RECEIVER_ADDRESS,
-      details: {
-        priceHuman: OG_PRICE,
-        decimals: 6,
-        chainId: 8453,
-        pendingTtlMinutes: PENDING_TTL_MINUTES,
-        note: "If wallet flow is interrupted, you can retry immediately (old pending gets cancelled).",
+    return NextResponse.json(
+      {
+        token,
+        amount: amountUnits,
+        recipientAddress: RECEIVER_ADDRESS,
+        details: {
+          priceHuman: OG_PRICE,
+          decimals: 6,
+          chainId: 8453,
+          pendingTtlMinutes: PENDING_TTL_MINUTES,
+          note: "If wallet flow is interrupted, you can retry immediately (old pending gets cancelled).",
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (e: any) {
     console.error("Error in /api/pay/og:", e);
     return NextResponse.json(
       { error: "Internal server error", details: String(e?.message ?? e) },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
