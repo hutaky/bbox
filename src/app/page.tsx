@@ -787,7 +787,7 @@ export default function HomePage() {
               <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
                 {isOg ? (
                   <>
-                    <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">BOX</span>
+                   
                     <AnimatedOgPill />
                   </>
                 ) : (
