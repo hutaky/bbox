@@ -748,12 +748,11 @@ export default function HomePage() {
                 {isOg ? (
                   <>
                     <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">
-                      BOX
                     </span>
                     <AnimatedOgPill />
                   </>
                 ) : (
-                  <span>BOX Based</span>
+                  <span>Based</span>
                 )}
               </div>
             </div>
