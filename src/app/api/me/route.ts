@@ -13,6 +13,29 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 type Body = { fid: number; username?: string | null; pfpUrl?: string | null };
 
+type UserRow = {
+  fid: number;
+  username: string | null;
+  pfp_url: string | null;
+  is_og: boolean | null;
+  is_pro: boolean | null;
+};
+
+type UserStatsRow = {
+  fid: number;
+  total_points: number | null;
+  free_picks_remaining: number | null;
+  extra_picks_remaining: number | null;
+  next_free_pick_at: string | null;
+  common_opens: number | null;
+  rare_opens: number | null;
+  epic_opens: number | null;
+  legendary_opens: number | null;
+  last_rarity: string | null;
+  last_points: number | null;
+  last_opened_at: string | null;
+};
+
 function addHours(date: Date, hours: number) {
   return new Date(date.getTime() + hours * 60 * 60 * 1000);
 }
@@ -30,7 +53,7 @@ export async function POST(req: Request) {
     const pfpUrl = body?.pfpUrl ?? null;
 
     // --- ensure user row exists ---
-    const { data: userRow, error: userErr } = await supabase
+    const { data: userRowRaw, error: userErr } = await supabase
       .from("users")
       .upsert(
         {
@@ -43,6 +66,8 @@ export async function POST(req: Request) {
       .select("fid, username, pfp_url, is_og, is_pro")
       .single();
 
+    const userRow = userRowRaw as unknown as UserRow | null;
+
     if (userErr || !userRow) {
       console.error("users upsert/select error:", userErr);
       return NextResponse.json({ error: "Failed to load user" }, { status: 500 });
@@ -51,7 +76,7 @@ export async function POST(req: Request) {
     const isOg = Boolean(userRow.is_og);
 
     // --- ensure stats row exists ---
-    const { data: stats0, error: statsErr0 } = await supabase
+    const { data: stats0Raw, error: statsErr0 } = await supabase
       .from("user_stats")
       .select(
         [
@@ -77,12 +102,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Failed to load stats" }, { status: 500 });
     }
 
+    const stats0 = stats0Raw as unknown as UserStatsRow | null;
+
     if (!stats0) {
       // First time: grant today's picks immediately
       const now = new Date();
       const dailyFree = isOg ? 2 : 1;
 
-      const { data: inserted, error: insErr } = await supabase
+      const { data: insertedRaw, error: insErr } = await supabase
         .from("user_stats")
         .insert({
           fid,
@@ -101,6 +128,8 @@ export async function POST(req: Request) {
         .select("*")
         .single();
 
+      const inserted = insertedRaw as unknown as UserStatsRow | null;
+
       if (insErr || !inserted) {
         console.error("user_stats insert error:", insErr);
         return NextResponse.json({ error: "Failed to create stats" }, { status: 500 });
@@ -112,14 +141,14 @@ export async function POST(req: Request) {
         pfpUrl: userRow.pfp_url,
         isOg: userRow.is_og,
         isPro: userRow.is_pro,
-        totalPoints: inserted.total_points,
-        freePicksRemaining: inserted.free_picks_remaining,
-        extraPicksRemaining: inserted.extra_picks_remaining,
+        totalPoints: Number(inserted.total_points ?? 0),
+        freePicksRemaining: Number(inserted.free_picks_remaining ?? 0),
+        extraPicksRemaining: Number(inserted.extra_picks_remaining ?? 0),
         nextFreePickAt: inserted.next_free_pick_at,
-        commonOpens: inserted.common_opens,
-        rareOpens: inserted.rare_opens,
-        epicOpens: inserted.epic_opens,
-        legendaryOpens: inserted.legendary_opens,
+        commonOpens: Number(inserted.common_opens ?? 0),
+        rareOpens: Number(inserted.rare_opens ?? 0),
+        epicOpens: Number(inserted.epic_opens ?? 0),
+        legendaryOpens: Number(inserted.legendary_opens ?? 0),
         lastResult: inserted.last_rarity
           ? { rarity: inserted.last_rarity, points: inserted.last_points, openedAt: inserted.last_opened_at }
           : null,
