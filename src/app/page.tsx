@@ -925,12 +925,12 @@ export default function HomePage() {
         <section className="mt-3 flex justify-center">
           <div className="w-full rounded-3xl border border-[#151836] bg-gradient-to-br from-[#050315] via-[#05081F] to-black px-4 py-3 shadow-[0_0_22px_rgba(0,0,0,0.65)]">
             <div className="text-center">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/80">Community opens</div>
+             {/* <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/80">Community opens</div>*/}
 
               {globalStats ? (
                 <>
                   <div className="mt-1 text-sm font-semibold text-[#E6EBFF]">
-                    Total: {globalStats.total.toLocaleString()}
+                    Community opens total: {globalStats.total.toLocaleString()} boxes
                   </div>
 
                   <div className="mt-2 grid grid-cols-4 gap-2 text-center">
