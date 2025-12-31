@@ -94,6 +94,18 @@ function donationInfoText(kindLabel: string) {
   ].join("\n");
 }
 
+function AnimatedOgPill() {
+  return (
+    <span className="relative inline-flex items-center">
+      <span className="absolute -inset-1 rounded-full bg-purple-500/20 blur-md animate-pulse" />
+      <span className="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-purple-300/60 bg-purple-500/10 text-purple-200">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-300 shadow-[0_0_10px_rgba(192,132,252,0.9)] animate-pulse" />
+        OG
+      </span>
+    </span>
+  );
+}
+
 export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
@@ -222,12 +234,6 @@ export default function HomePage() {
   const isOg = Boolean(user?.isOg);
   const freePicks = Number(user?.freePicksRemaining ?? 0);
   const extraPicks = Number(user?.extraPicksRemaining ?? 0);
-
-  const showOgTomorrowHint =
-    isOg &&
-    freePicks <= 0 &&
-    typeof user?.nextFreePickAt === "string" &&
-    formatCountdown(user.nextFreePickAt) !== "Ready";
 
   // ---- Pick ----
   async function handlePick(boxIndex: number) {
@@ -557,7 +563,6 @@ export default function HomePage() {
 
   const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-  const rankLabel = isOg ? "BOX OG" : "BOX Based";
 
   if (loading) {
     return (
@@ -595,7 +600,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* ✅ Fix: jobb felső user blokk stabil mobilon/desktopon */}
+          {/* ✅ Header stabil: nincs OG badge a usernév mellett */}
           <div className="flex items-center gap-2 min-w-0">
             {user?.pfpUrl ? (
               <img
@@ -610,21 +615,19 @@ export default function HomePage() {
             )}
 
             <div className="text-right min-w-0">
-              <div className="flex items-center justify-end gap-2 min-w-0">
-                <span className="text-sm font-medium truncate max-w-[140px]">{displayName}</span>
+              <div className="text-sm font-medium truncate max-w-[150px]">{displayName}</div>
 
-                {isOg && (
-                  <span className="relative inline-flex items-center shrink-0">
-                    <span className="absolute -inset-1 rounded-full bg-purple-500/20 blur-md animate-pulse" />
-                    <span className="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-purple-300/60 bg-purple-500/10 text-purple-200">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-300 shadow-[0_0_10px_rgba(192,132,252,0.9)] animate-pulse" />
-                      OG
-                    </span>
-                  </span>
+              {/* ✅ Itt cseréljük le a BOX OG sort animált OG-ra */}
+              <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
+                {isOg ? (
+                  <>
+                    <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">BOX</span>
+                    <AnimatedOgPill />
+                  </>
+                ) : (
+                  <span>BOX Based</span>
                 )}
               </div>
-
-              <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
         </header>
@@ -646,49 +649,48 @@ export default function HomePage() {
                 <span className="font-medium text-emerald-300">{extraPicks}</span>
               </div>
 
-              {/* ✅ Fix: free picks sor mobilon nem csúszik szét */}
-              <div
-                className={`mt-1 rounded-xl px-2 py-1 ${
-                  isOg ? "bg-purple-500/10 border border-purple-300/30" : ""
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-xs text-[#B0BBFF]/80">Free picks:</div>
-
-                    {isOg && (
-                      <div className="mt-1">
-                        <span className="inline-flex text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-300/40 text-purple-200">
-                          OG bonus +1/day
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className={`text-sm font-semibold ${isOg ? "text-purple-200" : "text-sky-300"} shrink-0`}>
+              <div className="mt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-[#B0BBFF]/80">Free picks:</span>
+                  <span className={`text-sm font-semibold ${isOg ? "text-purple-200" : "text-sky-300"} shrink-0`}>
                     {freePicks}
-                  </div>
+                  </span>
                 </div>
-
-                {/* ✅ Egyértelmű: holnaptól 2 free pick */}
-                {showOgTomorrowHint && (
-                  <p className="mt-2 text-[11px] text-purple-200/90">
-                    Tomorrow you’ll get <span className="font-semibold">2 free picks</span> as OG.
-                  </p>
-                )}
               </div>
 
-              <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
-                <span>Next free box:</span>
-                <span className={`font-semibold ${isOg ? "text-purple-200" : "text-emerald-300"}`}>
-                  {countdown || "Ready"}
-                </span>
+              {/* ✅ Next free box + OG copy röviden + CTA (nem OG esetén) */}
+              <div className="text-[11px] mt-2 flex items-start justify-between gap-2 text-[#A6B0FF]/80">
+                <span className="shrink-0">Next free box:</span>
+                <div className="text-right">
+                  <div className={`font-semibold ${isOg ? "text-purple-200" : "text-emerald-300"}`}>
+                    {countdown || "Ready"}
+                  </div>
+
+                  {isOg ? (
+                    <div className="mt-1 text-[10px] text-purple-200/90">
+                      +1 extra free pick/day as OG
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setShowOgModal(true);
+                        setBuyError(null);
+                        setBuyInfo(null);
+                      }}
+                      className="mt-1 text-[10px] text-purple-200/90 hover:text-purple-200 underline decoration-dotted"
+                    >
+                      Get +1 free pick/day → Become OG
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
             <div className="flex flex-col gap-2 shrink-0">
               <div className="px-3 py-2 rounded-2xl bg-gradient-to-br from-[#14162F] via-[#191B3D] to-[#050315] border border-[#2B3170] shadow-[0_0_20px_rgba(124,58,237,0.3)] min-w-[120px]">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">{rankLabel}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/90 mb-1">
+                  {isOg ? "BOX OG" : "BOX Based"}
+                </div>
                 <div className="text-xs font-semibold text-[#F4F0FF]">{league}</div>
               </div>
 
@@ -872,23 +874,6 @@ export default function HomePage() {
                 <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5"} USDC</span>
               </button>
             </div>
-
-            {!user?.isOg && (
-              <div className="border-t border-zinc-800 pt-3 mt-2">
-                <button
-                  disabled={buyLoading}
-                  onClick={() => {
-                    setShowBuyModal(false);
-                    setShowOgModal(true);
-                    setBuyError(null);
-                    setBuyInfo(null);
-                  }}
-                  className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
-                >
-                  Become an OG box opener
-                </button>
-              </div>
-            )}
 
             {buyInfo && (
               <div className="mt-3 text-[11px] text-emerald-200">
