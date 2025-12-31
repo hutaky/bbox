@@ -64,13 +64,10 @@ function buildPayDebugMessage(fallback: string, data: any): string {
   return `${base}\n\n[debug]\n${parts.join("\n")}`.trim();
 }
 
-function extractSendTokenError(result: any): string {
-  const reason = typeof result?.reason === "string" ? result.reason : "unknown";
-  const message =
-    result?.error?.message ??
-    result?.message ??
-    (typeof result === "string" ? result : "");
-  const combined = `${reason} ${message}`.trim();
+function extractSendTokenDebug(result: any): string {
+  const reason = typeof result?.reason === "string" ? result.reason : "";
+  const msg = result?.error?.message ?? result?.message ?? "";
+  const combined = `${reason} ${msg}`.trim();
   return combined || "unknown";
 }
 
@@ -78,26 +75,22 @@ function isWrongAmountLike(settleData: any): boolean {
   const err = String(settleData?.error ?? "").toLowerCase();
   if (err.includes("wrong amount")) return true;
 
-  // extra safety: ha az expected/actual mezők benne vannak, az is erre utal
-  const detailsStr = (() => {
-    try {
-      return JSON.stringify(settleData?.details ?? {});
-    } catch {
-      return "";
-    }
-  })().toLowerCase();
-
-  return detailsStr.includes("expected") && detailsStr.includes("actual");
+  let details = "";
+  try {
+    details = JSON.stringify(settleData?.details ?? {});
+  } catch {}
+  details = details.toLowerCase();
+  return details.includes("expected") && details.includes("actual");
 }
 
-function donationMessage(packLabel: string) {
+function donationInfoText(kindLabel: string) {
   return [
-    `Thanks for supporting BBOX 💙`,
-    ``,
-    `We received your payment, but the amount didn’t match the selected pack (${packLabel}).`,
-    `No picks were added.`,
-    ``,
-    `If you change the amount in the wallet screen, the transfer is treated as a donation.`,
+    "Thanks for supporting BBOX 💙",
+    "",
+    `We received your payment, but the amount didn’t match the selected option (${kindLabel}).`,
+    "No picks were added.",
+    "",
+    "If you change the amount in the wallet screen, the transfer is treated as a donation.",
   ].join("\n");
 }
 
@@ -113,13 +106,8 @@ export default function HomePage() {
 
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showOgModal, setShowOgModal] = useState(false);
-
   const [buyLoading, setBuyLoading] = useState(false);
-
-  // ERROR (piros debug)
   const [buyError, setBuyError] = useState<string | null>(null);
-
-  // INFO (brand / donation üzenet)
   const [buyInfo, setBuyInfo] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
@@ -138,6 +126,7 @@ export default function HomePage() {
           username: profile?.username ?? null,
           pfpUrl: profile?.pfpUrl ?? null,
         }),
+        cache: "no-store",
       });
 
       const data = await res.json();
@@ -230,6 +219,8 @@ export default function HomePage() {
   const canPick =
     (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
 
+  const isOg = Boolean(user?.isOg);
+
   // ---- Pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
@@ -298,16 +289,7 @@ export default function HomePage() {
     }
   }
 
-  function packLabel(packSize: 1 | 5 | 10) {
-    return `+${packSize} extra picks`;
-  }
-
-  /**
-   * NATÍV fizetés Mini App SDK-val:
-   * - backend visszaadja: paymentId + token (CAIP-19), amount (base units), recipientAddress
-   * - sdk.actions.sendToken(...)
-   * - tx hash -> /api/pay/settle (paymentId + txHash)
-   */
+  // ---- Payments ----
   async function handleBuyExtra(packSize: 1 | 5 | 10) {
     if (!fid) {
       alert("Missing FID, please open from Farcaster.");
@@ -328,6 +310,18 @@ export default function HomePage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setBuyError(buildPayDebugMessage("Failed to prepare payment.", data));
+        setBuyLoading(false);
+        return;
+      }
+
+      // Kompatibilitás: ha még tx-t küld a backend, adjunk értelmes hibát
+      if (data?.tx && !data?.token) {
+        setBuyError(
+          buildPayDebugMessage(
+            "Backend still returns tx payload. Update /api/pay/* to return { token, amount, recipientAddress } for sendToken.",
+            data
+          )
+        );
         setBuyLoading(false);
         return;
       }
@@ -353,7 +347,7 @@ export default function HomePage() {
         setBuyError(
           buildPayDebugMessage("Transaction cancelled or failed.", {
             error: "Transaction cancelled or failed.",
-            sdkDebug: extractSendTokenError(result),
+            sdkDebug: extractSendTokenDebug(result),
             details: result,
           })
         );
@@ -361,15 +355,10 @@ export default function HomePage() {
         return;
       }
 
-      const txHash =
-        result?.send?.transaction ??
-        result?.transaction ??
-        result?.txHash ??
-        null;
-
+      const txHash = result?.send?.transaction;
       if (!txHash || typeof txHash !== "string") {
         setBuyError(
-          buildPayDebugMessage("Payment confirmed, but missing tx hash from wallet.", {
+          buildPayDebugMessage("Payment confirmed, but missing tx hash.", {
             error: "Missing tx hash from sendToken result.",
             details: result,
           })
@@ -387,9 +376,9 @@ export default function HomePage() {
 
       const settleData = await settleRes.json().catch(() => ({}));
       if (!settleRes.ok) {
-        // BRAND-építés: ha wrong amount, ne bugként jelenjen meg
         if (isWrongAmountLike(settleData)) {
-          setBuyInfo(donationMessage(packLabel(packSize)));
+          const label = packSize === 1 ? "1-pack" : packSize === 5 ? "5-pack" : "10-pack";
+          setBuyInfo(donationInfoText(label));
           setBuyError(null);
           setBuyLoading(false);
           return;
@@ -422,6 +411,12 @@ export default function HomePage() {
       return;
     }
 
+    // UI safety (backend is the real guard)
+    if (user?.isOg) {
+      setBuyInfo("You’re already OG ✅");
+      return;
+    }
+
     try {
       setBuyLoading(true);
       setBuyError(null);
@@ -435,6 +430,13 @@ export default function HomePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // Already OG / pending
+        if (res.status === 409 && (data?.code === "ALREADY_OG" || data?.code === "PAYMENT_PENDING")) {
+          setBuyInfo(data?.error ?? "You’re already OG ✅");
+          setBuyLoading(false);
+          return;
+        }
+
         setBuyError(buildPayDebugMessage("Failed to prepare OG payment.", data));
         setBuyLoading(false);
         return;
@@ -461,7 +463,7 @@ export default function HomePage() {
         setBuyError(
           buildPayDebugMessage("Transaction cancelled or failed.", {
             error: "Transaction cancelled or failed.",
-            sdkDebug: extractSendTokenError(result),
+            sdkDebug: extractSendTokenDebug(result),
             details: result,
           })
         );
@@ -469,15 +471,10 @@ export default function HomePage() {
         return;
       }
 
-      const txHash =
-        result?.send?.transaction ??
-        result?.transaction ??
-        result?.txHash ??
-        null;
-
+      const txHash = result?.send?.transaction;
       if (!txHash || typeof txHash !== "string") {
         setBuyError(
-          buildPayDebugMessage("Payment confirmed, but missing tx hash from wallet.", {
+          buildPayDebugMessage("Payment confirmed, but missing tx hash.", {
             error: "Missing tx hash from sendToken result.",
             details: result,
           })
@@ -495,7 +492,6 @@ export default function HomePage() {
 
       const settleData = await settleRes.json().catch(() => ({}));
       if (!settleRes.ok) {
-        // OG-nál is lehet mismatch (ha átírja az összeget) -> donation message
         if (isWrongAmountLike(settleData)) {
           setBuyInfo(
             [
@@ -564,13 +560,8 @@ export default function HomePage() {
 
   const displayName = user?.username || (fid ? `fid:${fid}` : "Guest");
   const league = getLeagueFromPoints(user?.totalPoints ?? 0);
-  const rankLabel = user?.isOg
-    ? user?.isPro
-      ? "BOX PRO OG"
-      : "BOX OG"
-    : user?.isPro
-    ? "BOX PRO"
-    : "BOX Based";
+
+  const rankLabel = user?.isOg ? "BOX OG" : "BOX Based";
 
   if (loading) {
     return (
@@ -621,7 +612,20 @@ export default function HomePage() {
               </div>
             )}
             <div className="text-right">
-              <div className="text-sm font-medium truncate max-w-[120px]">{displayName}</div>
+              <div className="text-sm font-medium truncate max-w-[140px] flex items-center justify-end gap-2">
+                <span className="truncate max-w-[120px]">{displayName}</span>
+
+                {/* ✅ OG badge animáció */}
+                {isOg && (
+                  <span className="relative inline-flex items-center">
+                    <span className="absolute -inset-1 rounded-full bg-purple-500/20 blur-md animate-pulse" />
+                    <span className="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-purple-300/60 bg-purple-500/10 text-purple-200">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-300 shadow-[0_0_10px_rgba(192,132,252,0.9)] animate-pulse" />
+                      OG
+                    </span>
+                  </span>
+                )}
+              </div>
               <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
@@ -638,17 +642,41 @@ export default function HomePage() {
                 <span className="tracking-[0.18em]">TOTAL POINTS:</span>
                 <span className="font-semibold text-[13px] text-[#E6EBFF]">{user?.totalPoints ?? 0}</span>
               </div>
+
               <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-2">
                 <span>Extra picks:</span>
                 <span className="font-medium text-emerald-300">{user?.extraPicksRemaining ?? 0}</span>
               </div>
-              <div className="flex justify-between text-xs text-[#B0BBFF]/80 mt-1">
-                <span>Free picks:</span>
-                <span className="font-medium text-sky-300">{user?.freePicksRemaining ?? 0}</span>
+
+              {/* ✅ OG free pick kiemelés */}
+              <div
+                className={`mt-1 rounded-xl px-2 py-1 ${
+                  isOg
+                    ? "bg-purple-500/10 border border-purple-300/30 shadow-[0_0_18px_rgba(192,132,252,0.25)]"
+                    : ""
+                }`}
+              >
+                <div className="flex justify-between text-xs text-[#B0BBFF]/80">
+                  <span className="flex items-center gap-2">
+                    <span>Free picks:</span>
+                    {isOg && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-300/40 text-purple-200">
+                        OG bonus +1/day
+                      </span>
+                    )}
+                  </span>
+
+                  <span className={`font-medium ${isOg ? "text-purple-200" : "text-sky-300"}`}>
+                    {user?.freePicksRemaining ?? 0}
+                  </span>
+                </div>
               </div>
+
               <div className="text-[11px] mt-2 flex items-center justify-between text-[#A6B0FF]/80">
                 <span>Next free box:</span>
-                <span className="font-semibold text-emerald-300">{countdown || "Ready"}</span>
+                <span className={`font-semibold ${isOg ? "text-purple-200" : "text-emerald-300"}`}>
+                  {countdown || "Ready"}
+                </span>
               </div>
             </div>
 
@@ -660,9 +688,9 @@ export default function HomePage() {
 
               <button
                 onClick={() => {
+                  setShowBuyModal(true);
                   setBuyError(null);
                   setBuyInfo(null);
-                  setShowBuyModal(true);
                 }}
                 className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-2xl bg-gradient-to-r from-[#2563EB] via-[#00C2FF] to-[#22C55E] text-xs font-semibold shadow-[0_0_24px_rgba(37,99,235,0.8)] hover:brightness-110 transition"
               >
@@ -752,171 +780,6 @@ export default function HomePage() {
         </section>
       </div>
 
-      {/* BUY MODAL */}
-      {showBuyModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-            <button
-              onClick={() => {
-                setShowBuyModal(false);
-                setBuyError(null);
-                setBuyInfo(null);
-              }}
-              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
-            >
-              ✕
-            </button>
-
-            <div className="text-center mt-1 mb-3">
-              <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
-              <p className="text-[11px] text-gray-400">
-                This opens a native Farcaster wallet confirmation (no new tab).
-              </p>
-            </div>
-
-            <div className="space-y-2 mb-3">
-              <button
-                disabled={buyLoading}
-                onClick={() => handleBuyExtra(1)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
-              >
-                <span>+1 extra pick</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_EXTRA_PRICE_1 ?? "0.5"} USDC</span>
-              </button>
-
-              <button
-                disabled={buyLoading}
-                onClick={() => handleBuyExtra(5)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
-              >
-                <span>+5 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_EXTRA_PRICE_5 ?? "2.0"} USDC</span>
-              </button>
-
-              <button
-                disabled={buyLoading}
-                onClick={() => handleBuyExtra(10)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
-              >
-                <span>+10 extra picks</span>
-                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_EXTRA_PRICE_10 ?? "3.5"} USDC</span>
-              </button>
-            </div>
-
-            {/* NEW: donation warning (brand friendly) */}
-            <div className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200/90 leading-snug">
-              <div className="font-semibold text-sky-200">Important</div>
-              Please do <span className="font-semibold">not</span> change the amount in the wallet screen. Only the exact price unlocks the selected pack.
-              <div className="mt-1 text-sky-200/80">
-                If you change the amount, the transfer is treated as a donation — thank you for supporting BBOX 💙
-              </div>
-            </div>
-
-{!user?.isOg && (
-  <div className="border-t border-zinc-800 pt-3 mt-3">
-    <button
-      disabled={buyLoading}
-      onClick={() => {
-        setShowBuyModal(false);
-        setShowOgModal(true);
-        setBuyError(null);
-        setBuyInfo(null);
-      }}
-      className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
-    >
-      Become an OG box opener
-    </button>
-  </div>
-)}
-
-
-            {/* BRAND INFO BOX (donation / mismatch) */}
-            {buyInfo && (
-              <div className="mt-3 rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200/90">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
-              </div>
-            )}
-
-            {/* DEBUG ERROR (only for real failures) */}
-            {buyError && (
-              <div className="mt-3 text-[11px] text-red-300">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
-              </div>
-            )}
-
-            {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* OG MODAL (unchanged UI, but supports donation-style message too) */}
-      {showOgModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-            <button
-              onClick={() => {
-                setShowOgModal(false);
-                setBuyError(null);
-                setBuyInfo(null);
-              }}
-              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
-            >
-              ✕
-            </button>
-
-            <div className="mt-1 mb-3">
-              <h3 className="text-sm font-semibold mb-1 text-center">Become OG</h3>
-              <p className="text-[11px] text-gray-400 text-center">
-                One-time purchase, FID-bound. OGs get a permanent daily buff and a unique badge in BBOX.
-              </p>
-            </div>
-
-<button
-  disabled={buyLoading || Boolean(user?.isOg)}
-  onClick={() => {
-    if (!user?.isOg) handleBuyOg();
-  }}
-  className={`w-full py-2 rounded-xl text-xs font-semibold mb-2 transition
-    ${
-      buyLoading || user?.isOg
-        ? "bg-zinc-800 text-zinc-400 cursor-not-allowed"
-        : "bg-purple-700 hover:bg-purple-600 text-white"
-    }`}
->
-  {user?.isOg
-    ? "You’re already OG ✅"
-    : `Become OG (${process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)`}
-</button>
-
-
-            <button
-              onClick={() => setShowOgModal(false)}
-              className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
-            >
-              Maybe later
-            </button>
-
-            {buyInfo && (
-              <div className="mt-3 rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200/90">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
-              </div>
-            )}
-
-            {buyError && (
-              <div className="mt-3 text-[11px] text-red-300">
-                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
-              </div>
-            )}
-
-            {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* RESULT MODAL */}
       {showResultModal && lastResult && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
@@ -942,6 +805,172 @@ export default function HomePage() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BUY MODAL */}
+      {showBuyModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
+            <button
+              onClick={() => {
+                setShowBuyModal(false);
+                setBuyError(null);
+                setBuyInfo(null);
+              }}
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
+            >
+              ✕
+            </button>
+
+            <div className="text-center mt-1 mb-3">
+              <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
+              <p className="text-[11px] text-gray-400">
+                This opens a native Farcaster wallet confirmation (no new tab).
+              </p>
+            </div>
+
+            {/* Brand / donation note */}
+            <div className="mb-3 rounded-2xl border border-[#1C2348] bg-[#070B2A]/40 px-3 py-2">
+              <p className="text-[11px] text-gray-300 leading-snug">
+                Heads up: If you change the amount in the wallet screen, no picks will be added.
+                The transfer will be treated as a donation — thanks for supporting BBOX 💙
+              </p>
+            </div>
+
+            <div className="space-y-2 mb-3">
+              <button
+                disabled={buyLoading}
+                onClick={() => handleBuyExtra(1)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
+              >
+                <span>+1 extra pick</span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_1 ?? "0.5"} USDC</span>
+              </button>
+
+              <button
+                disabled={buyLoading}
+                onClick={() => handleBuyExtra(5)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
+              >
+                <span>+5 extra picks</span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_5 ?? "2.0"} USDC</span>
+              </button>
+
+              <button
+                disabled={buyLoading}
+                onClick={() => handleBuyExtra(10)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs"
+              >
+                <span>+10 extra picks</span>
+                <span className="text-gray-300">{process.env.NEXT_PUBLIC_BBOX_PRICE_10 ?? "3.5"} USDC</span>
+              </button>
+            </div>
+
+            {/* ✅ OG link elrejtése, ha már OG */}
+            {!user?.isOg && (
+              <div className="border-t border-zinc-800 pt-3 mt-2">
+                <button
+                  disabled={buyLoading}
+                  onClick={() => {
+                    setShowBuyModal(false);
+                    setShowOgModal(true);
+                    setBuyError(null);
+                    setBuyInfo(null);
+                  }}
+                  className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
+                >
+                  Become an OG box opener
+                </button>
+              </div>
+            )}
+
+            {buyInfo && (
+              <div className="mt-3 text-[11px] text-emerald-200">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
+              </div>
+            )}
+
+            {buyError && (
+              <div className="mt-3 text-[11px] text-red-300">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
+              </div>
+            )}
+
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Waiting for confirmation…
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* OG MODAL */}
+      {showOgModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
+            <button
+              onClick={() => {
+                setShowOgModal(false);
+                setBuyError(null);
+                setBuyInfo(null);
+              }}
+              className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
+            >
+              ✕
+            </button>
+
+            <div className="mt-1 mb-3">
+              <h3 className="text-sm font-semibold mb-1 text-center">Become OG</h3>
+              <p className="text-[11px] text-gray-400 text-center">
+                One-time purchase, FID-bound. OGs get a permanent daily buff and a unique badge in BBOX.
+              </p>
+            </div>
+
+            {/* ✅ OG gomb tiltása + szöveg */}
+            <button
+              disabled={buyLoading || Boolean(user?.isOg)}
+              onClick={() => {
+                if (!user?.isOg) handleBuyOg();
+              }}
+              className={`w-full py-2 rounded-xl text-xs font-semibold mb-2 transition
+                ${
+                  buyLoading || user?.isOg
+                    ? "bg-zinc-800 text-zinc-400 cursor-not-allowed"
+                    : "bg-purple-700 hover:bg-purple-600 text-white"
+                }`}
+            >
+              {user?.isOg
+                ? "You’re already OG ✅"
+                : `Become OG (${process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)`}
+            </button>
+
+            <button
+              onClick={() => setShowOgModal(false)}
+              className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
+            >
+              Maybe later
+            </button>
+
+            {buyInfo && (
+              <div className="mt-3 text-[11px] text-emerald-200">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
+              </div>
+            )}
+
+            {buyError && (
+              <div className="mt-3 text-[11px] text-red-300">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
+              </div>
+            )}
+
+            {buyLoading && (
+              <p className="mt-2 text-[11px] text-gray-400 text-center">
+                Waiting for confirmation…
+              </p>
+            )}
           </div>
         </div>
       )}
