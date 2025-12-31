@@ -7,6 +7,17 @@ import { sdk } from "@farcaster/miniapp-sdk";
 import type { ApiUserState } from "@/types";
 import confetti from "canvas-confetti";
 
+const [globalStats, setGlobalStats] = useState<{
+  common: number;
+  rare: number;
+  epic: number;
+  legendary: number;
+  total: number;
+} | null>(null);
+
+const [globalStatsErr, setGlobalStatsErr] = useState<string | null>(null);
+
+
 // ✅ Share-hez ezt használjuk (szép embed, nem látszik a vercel domain)
 const SHARE_APP_URL = "https://farcaster.xyz/miniapps/c70HLy47umXy/bbox";
 
@@ -309,6 +320,26 @@ export default function HomePage() {
     }, 1000);
     return () => window.clearInterval(interval);
   }, [user?.nextFreePickAt]);
+
+  useEffect(() => {
+  async function loadGlobalStats() {
+    try {
+      setGlobalStatsErr(null);
+      const res = await fetch("/api/global-stats", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setGlobalStatsErr(data?.error || "Failed to load global stats");
+        return;
+      }
+      setGlobalStats(data);
+    } catch (e) {
+      setGlobalStatsErr("Failed to load global stats");
+    }
+  }
+
+  loadGlobalStats();
+}, []);
+
 
   const canPick =
     (user?.freePicksRemaining ?? 0) > 0 ||
@@ -949,6 +980,56 @@ export default function HomePage() {
             FAQ
           </Link>
         </section>
+        {/* GLOBAL STATS CARD */}
+<section className="mt-3 flex justify-center">
+  <div className="w-full rounded-3xl border border-[#151836] bg-gradient-to-br from-[#050315] via-[#05081F] to-black px-4 py-3 shadow-[0_0_22px_rgba(0,0,0,0.65)]">
+    <div className="text-center">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/80">
+        Community opens
+      </div>
+
+      {globalStats ? (
+        <>
+          <div className="mt-1 text-sm font-semibold text-[#E6EBFF]">
+            Total: {globalStats.total.toLocaleString()}
+          </div>
+
+          <div className="mt-2 grid grid-cols-4 gap-2 text-center">
+            <div className="rounded-2xl border border-zinc-800 bg-black/30 py-2">
+              <div className="text-[10px] text-gray-400">Common</div>
+              <div className="text-sm font-bold text-gray-200">
+                {globalStats.common.toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-black/30 py-2">
+              <div className="text-[10px] text-gray-400">Rare</div>
+              <div className="text-sm font-bold text-rare">
+                {globalStats.rare.toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-black/30 py-2">
+              <div className="text-[10px] text-gray-400">Epic</div>
+              <div className="text-sm font-bold text-epic">
+                {globalStats.epic.toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-black/30 py-2">
+              <div className="text-[10px] text-gray-400">Legendary</div>
+              <div className="text-sm font-bold text-legendary">
+                {globalStats.legendary.toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="mt-2 text-[11px] text-gray-400">
+          {globalStatsErr ?? "Loading…"}
+        </div>
+      )}
+    </div>
+  </div>
+</section>
+
       </div>
 
       {/* RESULT MODAL */}
