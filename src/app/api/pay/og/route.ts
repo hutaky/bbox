@@ -27,24 +27,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing fid" }, { status: 400 });
     }
 
-    if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json(
-        { error: "Server misconfigured (missing env)" },
-        { status: 500 }
-      );
-    }
-
-    if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return NextResponse.json(
         {
-          error: "Invalid RECEIVER/USDC address",
-          details: { RECEIVER_ADDRESS, USDC_CONTRACT },
+          error: "Server misconfigured (missing Supabase env)",
+          details: {
+            hasUrl: Boolean(SUPABASE_URL),
+            hasServiceRoleKey: Boolean(SUPABASE_SERVICE_ROLE_KEY),
+          },
         },
         { status: 500 }
       );
     }
 
-    // USDC (6 decimals)
+    if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
+      return NextResponse.json({ error: "Server misconfigured (missing pay env)" }, { status: 500 });
+    }
+
+    if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
+      return NextResponse.json(
+        { error: "Invalid RECEIVER/USDC address", details: { RECEIVER_ADDRESS, USDC_CONTRACT } },
+        { status: 500 }
+      );
+    }
+
     const amount = parseUnits(OG_PRICE, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
@@ -63,7 +69,15 @@ export async function POST(req: Request) {
     if (insertError || !data?.id) {
       console.error("payments insert OG error:", insertError);
       return NextResponse.json(
-        { error: "Failed to create OG payment intent" },
+        {
+          error: "Failed to create OG payment intent",
+          details: {
+            message: insertError?.message ?? null,
+            code: (insertError as any)?.code ?? null,
+            hint: (insertError as any)?.hint ?? null,
+            details: (insertError as any)?.details ?? null,
+          },
+        },
         { status: 500 }
       );
     }
