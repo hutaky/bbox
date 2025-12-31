@@ -51,10 +51,53 @@ export async function POST(req: Request) {
       );
     }
 
+    // 1) Already OG? -> block
+    const { data: userRow, error: userErr } = await supabase
+      .from("users")
+      .select("fid, is_og")
+      .eq("fid", fid)
+      .maybeSingle();
+
+    if (userErr) {
+      console.error("users select error:", userErr);
+      return NextResponse.json({ error: "Failed to load user" }, { status: 500 });
+    }
+
+    if (userRow?.is_og) {
+      return NextResponse.json(
+        { error: "Already OG", code: "ALREADY_OG" },
+        { status: 409 }
+      );
+    }
+
+    // 2) Pending OG payment exists? -> block (prevents spam / double click)
+    const { data: pendingOg, error: pendingErr } = await supabase
+      .from("payments")
+      .select("id, status")
+      .eq("fid", fid)
+      .eq("kind", "og_rank")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (pendingErr) {
+      console.error("payments pending check error:", pendingErr);
+      return NextResponse.json({ error: "Failed to validate pending payment" }, { status: 500 });
+    }
+
+    if (pendingOg && pendingOg.length > 0) {
+      return NextResponse.json(
+        { error: "OG payment already pending", code: "PAYMENT_PENDING" },
+        { status: 409 }
+      );
+    }
+
+    // Prepare payload for sendToken
     const amount = parseUnits(OG_PRICE, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    const { data, error: insertError } = await supabase
+    // Create pending payment intent
+    const { data: insert, error: insertError } = await supabase
       .from("payments")
       .insert({
         fid,
@@ -66,7 +109,7 @@ export async function POST(req: Request) {
       .select("id")
       .single();
 
-    if (insertError || !data?.id) {
+    if (insertError || !insert?.id) {
       console.error("payments insert OG error:", insertError);
       return NextResponse.json(
         {
@@ -83,7 +126,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({
-      paymentId: data.id,
+      paymentId: insert.id,
       token,
       amount,
       recipientAddress: RECEIVER_ADDRESS,
