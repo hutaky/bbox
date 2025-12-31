@@ -199,7 +199,7 @@ export default function FAQPage() {
               They don’t expire — unused picks stay on your account.
             </p>
             <p className="text-[12px] text-gray-400 leading-snug">
-              You can buy extra picks in-app with a native Farcaster wallet confirmation (no new tab).
+              You can buy extra picks in-app with a native Farcaster wallet confirmation.
             </p>
           </div>
 
