@@ -16,7 +16,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+// ennyi idő után a pending-et elengedjük (ne ragadjon be)
+const PENDING_TTL_MINUTES = 10;
+
 type Body = { fid: number };
+
+function minutesAgoIso(min: number) {
+  return new Date(Date.now() - min * 60 * 1000).toISOString();
+}
 
 export async function POST(req: Request) {
   try {
@@ -27,21 +34,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing fid" }, { status: 400 });
     }
 
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json(
-        {
-          error: "Server misconfigured (missing Supabase env)",
-          details: {
-            hasUrl: Boolean(SUPABASE_URL),
-            hasServiceRoleKey: Boolean(SUPABASE_SERVICE_ROLE_KEY),
-          },
-        },
-        { status: 500 }
-      );
-    }
-
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json({ error: "Server misconfigured (missing pay env)" }, { status: 500 });
+      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
     }
 
     if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
@@ -51,85 +45,48 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Already OG? -> block
-    const { data: userRow, error: userErr } = await supabase
+    // 0) Ha már OG, backend is védjen
+    const { data: userRow, error: uErr } = await supabase
       .from("users")
       .select("fid, is_og")
       .eq("fid", fid)
       .maybeSingle();
 
-    if (userErr) {
-      console.error("users select error:", userErr);
-      return NextResponse.json({ error: "Failed to load user" }, { status: 500 });
-    }
-
+    if (uErr) console.error("users select og check error:", uErr);
     if (userRow?.is_og) {
-      return NextResponse.json(
-        { error: "Already OG", code: "ALREADY_OG" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "Already OG" }, { status: 409 });
     }
 
-    // 2) Pending OG payment exists? -> block (prevents spam / double click)
-    const { data: pendingOg, error: pendingErr } = await supabase
+    // 1) Régi pending-ek lejáratása (hogy ne ragadjon be)
+    await supabase
       .from("payments")
-      .select("id, status")
+      .update({ status: "expired", updated_at: new Date().toISOString() })
       .eq("fid", fid)
       .eq("kind", "og_rank")
       .eq("status", "pending")
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .is("tx_hash", null)
+      .lt("created_at", minutesAgoIso(PENDING_TTL_MINUTES));
 
-    if (pendingErr) {
-      console.error("payments pending check error:", pendingErr);
-      return NextResponse.json({ error: "Failed to validate pending payment" }, { status: 500 });
-    }
-
-    if (pendingOg && pendingOg.length > 0) {
-      return NextResponse.json(
-        { error: "OG payment already pending", code: "PAYMENT_PENDING" },
-        { status: 409 }
-      );
-    }
-
-    // Prepare payload for sendToken
-    const amount = parseUnits(OG_PRICE, 6).toString();
+    const amountUnits = parseUnits(OG_PRICE, 6).toString();
     const token = `eip155:8453/erc20:${USDC_CONTRACT}`;
 
-    // Create pending payment intent
-    const { data: insert, error: insertError } = await supabase
-      .from("payments")
-      .insert({
-        fid,
-        kind: "og_rank",
-        pack_size: null,
-        frame_id: null,
-        status: "pending",
-      })
-      .select("id")
-      .single();
+    // 2) új pending
+    const { error: insertError } = await supabase.from("payments").insert({
+      fid,
+      kind: "og_rank",
+      pack_size: null,
+      frame_id: null,
+      tx_hash: null,
+      status: "pending",
+    });
 
-    if (insertError || !insert?.id) {
-      console.error("payments insert OG error:", insertError);
-      return NextResponse.json(
-        {
-          error: "Failed to create OG payment intent",
-          details: {
-            message: insertError?.message ?? null,
-            code: (insertError as any)?.code ?? null,
-            hint: (insertError as any)?.hint ?? null,
-            details: (insertError as any)?.details ?? null,
-          },
-        },
-        { status: 500 }
-      );
-    }
+    if (insertError) console.error("payments insert OG error:", insertError);
 
     return NextResponse.json({
-      paymentId: insert.id,
       token,
-      amount,
+      amount: amountUnits,
       recipientAddress: RECEIVER_ADDRESS,
+      details: { priceHuman: OG_PRICE, decimals: 6, chainId: 8453, pendingTtlMinutes: PENDING_TTL_MINUTES },
     });
   } catch (e: any) {
     console.error("Error in /api/pay/og:", e);
