@@ -65,7 +65,6 @@ function buildPayDebugMessage(fallback: string, data: any): string {
 }
 
 function extractSendTokenError(result: any): string {
-  // SendTokenResult típusváltozatok miatt defensive (a reason nem garantált)
   const reason = typeof result?.reason === "string" ? result.reason : "unknown";
   const message =
     result?.error?.message ??
@@ -73,6 +72,33 @@ function extractSendTokenError(result: any): string {
     (typeof result === "string" ? result : "");
   const combined = `${reason} ${message}`.trim();
   return combined || "unknown";
+}
+
+function isWrongAmountLike(settleData: any): boolean {
+  const err = String(settleData?.error ?? "").toLowerCase();
+  if (err.includes("wrong amount")) return true;
+
+  // extra safety: ha az expected/actual mezők benne vannak, az is erre utal
+  const detailsStr = (() => {
+    try {
+      return JSON.stringify(settleData?.details ?? {});
+    } catch {
+      return "";
+    }
+  })().toLowerCase();
+
+  return detailsStr.includes("expected") && detailsStr.includes("actual");
+}
+
+function donationMessage(packLabel: string) {
+  return [
+    `Thanks for supporting BBOX 💙`,
+    ``,
+    `We received your payment, but the amount didn’t match the selected pack (${packLabel}).`,
+    `No picks were added.`,
+    ``,
+    `If you change the amount in the wallet screen, the transfer is treated as a donation.`,
+  ].join("\n");
 }
 
 export default function HomePage() {
@@ -87,8 +113,14 @@ export default function HomePage() {
 
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showOgModal, setShowOgModal] = useState(false);
+
   const [buyLoading, setBuyLoading] = useState(false);
+
+  // ERROR (piros debug)
   const [buyError, setBuyError] = useState<string | null>(null);
+
+  // INFO (brand / donation üzenet)
+  const [buyInfo, setBuyInfo] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
 
@@ -266,6 +298,10 @@ export default function HomePage() {
     }
   }
 
+  function packLabel(packSize: 1 | 5 | 10) {
+    return `+${packSize} extra picks`;
+  }
+
   /**
    * NATÍV fizetés Mini App SDK-val:
    * - backend visszaadja: paymentId + token (CAIP-19), amount (base units), recipientAddress
@@ -281,6 +317,7 @@ export default function HomePage() {
     try {
       setBuyLoading(true);
       setBuyError(null);
+      setBuyInfo(null);
 
       const res = await fetch("/api/pay/extra", {
         method: "POST",
@@ -324,7 +361,6 @@ export default function HomePage() {
         return;
       }
 
-      // defensive txHash extract
       const txHash =
         result?.send?.transaction ??
         result?.transaction ??
@@ -351,6 +387,14 @@ export default function HomePage() {
 
       const settleData = await settleRes.json().catch(() => ({}));
       if (!settleRes.ok) {
+        // BRAND-építés: ha wrong amount, ne bugként jelenjen meg
+        if (isWrongAmountLike(settleData)) {
+          setBuyInfo(donationMessage(packLabel(packSize)));
+          setBuyError(null);
+          setBuyLoading(false);
+          return;
+        }
+
         setBuyError(buildPayDebugMessage("Payment sent, but verification failed.", settleData));
         setBuyLoading(false);
         return;
@@ -363,6 +407,7 @@ export default function HomePage() {
 
       setBuyLoading(false);
       setBuyError(null);
+      setBuyInfo(null);
       setShowBuyModal(false);
     } catch (err: any) {
       console.error("handleBuyExtra error:", err);
@@ -380,6 +425,7 @@ export default function HomePage() {
     try {
       setBuyLoading(true);
       setBuyError(null);
+      setBuyInfo(null);
 
       const res = await fetch("/api/pay/og", {
         method: "POST",
@@ -449,6 +495,23 @@ export default function HomePage() {
 
       const settleData = await settleRes.json().catch(() => ({}));
       if (!settleRes.ok) {
+        // OG-nál is lehet mismatch (ha átírja az összeget) -> donation message
+        if (isWrongAmountLike(settleData)) {
+          setBuyInfo(
+            [
+              "Thanks for supporting BBOX 💙",
+              "",
+              "We received your payment, but the amount didn’t match the OG purchase price.",
+              "OG status was not activated.",
+              "",
+              "If you change the amount in the wallet screen, the transfer is treated as a donation.",
+            ].join("\n")
+          );
+          setBuyError(null);
+          setBuyLoading(false);
+          return;
+        }
+
         setBuyError(buildPayDebugMessage("Payment sent, but verification failed.", settleData));
         setBuyLoading(false);
         return;
@@ -461,6 +524,7 @@ export default function HomePage() {
 
       setBuyLoading(false);
       setBuyError(null);
+      setBuyInfo(null);
       setShowOgModal(false);
     } catch (err: any) {
       console.error("handleBuyOg error:", err);
@@ -558,7 +622,6 @@ export default function HomePage() {
             )}
             <div className="text-right">
               <div className="text-sm font-medium truncate max-w-[120px]">{displayName}</div>
-              {/* FIX: backtick typo removed */}
               <div className="text-[11px] text-[#F4F0FF]/80">{rankLabel}</div>
             </div>
           </div>
@@ -596,7 +659,11 @@ export default function HomePage() {
               </div>
 
               <button
-                onClick={() => setShowBuyModal(true)}
+                onClick={() => {
+                  setBuyError(null);
+                  setBuyInfo(null);
+                  setShowBuyModal(true);
+                }}
                 className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-2xl bg-gradient-to-r from-[#2563EB] via-[#00C2FF] to-[#22C55E] text-xs font-semibold shadow-[0_0_24px_rgba(37,99,235,0.8)] hover:brightness-110 transition"
               >
                 <span className="text-[12px]">+ Buy extra</span>
@@ -685,35 +752,6 @@ export default function HomePage() {
         </section>
       </div>
 
-      {/* RESULT MODAL */}
-      {showResultModal && lastResult && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
-          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
-            <button onClick={() => setShowResultModal(false)} className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm">
-              ✕
-            </button>
-            <div className="text-center mt-2">
-              <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
-              <h3 className="text-sm font-semibold mb-2">You opened a {renderRarityLabel(lastResult.rarity)}!</h3>
-              <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
-              <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
-              <button
-                onClick={handleShareResult}
-                className="w-full py-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#00C2FF] hover:brightness-110 text-xs font-semibold mb-2"
-              >
-                Share on Farcaster
-              </button>
-              <button
-                onClick={() => setShowResultModal(false)}
-                className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* BUY MODAL */}
       {showBuyModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
@@ -722,6 +760,7 @@ export default function HomePage() {
               onClick={() => {
                 setShowBuyModal(false);
                 setBuyError(null);
+                setBuyInfo(null);
               }}
               className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
             >
@@ -764,13 +803,23 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div className="border-t border-zinc-800 pt-3 mt-2">
+            {/* NEW: donation warning (brand friendly) */}
+            <div className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200/90 leading-snug">
+              <div className="font-semibold text-sky-200">Important</div>
+              Please do <span className="font-semibold">not</span> change the amount in the wallet screen. Only the exact price unlocks the selected pack.
+              <div className="mt-1 text-sky-200/80">
+                If you change the amount, the transfer is treated as a donation — thank you for supporting BBOX 💙
+              </div>
+            </div>
+
+            <div className="border-t border-zinc-800 pt-3 mt-3">
               <button
                 disabled={buyLoading}
                 onClick={() => {
                   setShowBuyModal(false);
                   setShowOgModal(true);
                   setBuyError(null);
+                  setBuyInfo(null);
                 }}
                 className="w-full text-[11px] text-purple-300 hover:text-purple-200 underline decoration-dotted"
               >
@@ -778,6 +827,14 @@ export default function HomePage() {
               </button>
             </div>
 
+            {/* BRAND INFO BOX (donation / mismatch) */}
+            {buyInfo && (
+              <div className="mt-3 rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200/90">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
+              </div>
+            )}
+
+            {/* DEBUG ERROR (only for real failures) */}
             {buyError && (
               <div className="mt-3 text-[11px] text-red-300">
                 <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
@@ -791,7 +848,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* OG MODAL */}
+      {/* OG MODAL (unchanged UI, but supports donation-style message too) */}
       {showOgModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
           <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
@@ -799,6 +856,7 @@ export default function HomePage() {
               onClick={() => {
                 setShowOgModal(false);
                 setBuyError(null);
+                setBuyInfo(null);
               }}
               className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm"
             >
@@ -827,6 +885,12 @@ export default function HomePage() {
               Maybe later
             </button>
 
+            {buyInfo && (
+              <div className="mt-3 rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200/90">
+                <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyInfo}</pre>
+              </div>
+            )}
+
             {buyError && (
               <div className="mt-3 text-[11px] text-red-300">
                 <pre className="whitespace-pre-wrap break-words text-center font-mono">{buyError}</pre>
@@ -836,6 +900,35 @@ export default function HomePage() {
             {buyLoading && (
               <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* RESULT MODAL */}
+      {showResultModal && lastResult && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="w-full max-w-xs bg-[#050315] border border-[#1F2937] rounded-2xl px-4 py-4 relative shadow-[0_0_32px_rgba(0,0,0,0.9)]">
+            <button onClick={() => setShowResultModal(false)} className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-sm">
+              ✕
+            </button>
+            <div className="text-center mt-2">
+              <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
+              <h3 className="text-sm font-semibold mb-2">You opened a {renderRarityLabel(lastResult.rarity)}!</h3>
+              <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
+              <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
+              <button
+                onClick={handleShareResult}
+                className="w-full py-2 rounded-xl bg-gradient-to-r from-[#2563EB] to-[#00C2FF] hover:brightness-110 text-xs font-semibold mb-2"
+              >
+                Share on Farcaster
+              </button>
+              <button
+                onClick={() => setShowResultModal(false)}
+                className="w-full py-2 rounded-xl border border-zinc-700 text-xs text-gray-300 hover:bg-zinc-900"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
