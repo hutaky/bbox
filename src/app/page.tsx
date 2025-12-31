@@ -239,6 +239,28 @@ export default function HomePage() {
     }
   }
 
+  // ✅ Global stats fetch (külön függvény, hogy tudjuk hívni pollingból + pick után is)
+  const refreshGlobalStats = async () => {
+    try {
+      setGlobalStatsErr(null);
+
+      // cache-bypass: timestamp query param
+      const res = await fetch(`/api/global-stats?t=${Date.now()}`, {
+        cache: "no-store",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setGlobalStatsErr(data?.error || "Failed to load global stats");
+        return;
+      }
+
+      setGlobalStats(data as GlobalStats);
+    } catch {
+      setGlobalStatsErr("Failed to load global stats");
+    }
+  };
+
   // ---- Mini App init ----
   useEffect(() => {
     mountedRef.current = true;
@@ -261,7 +283,8 @@ export default function HomePage() {
           context?.frameData?.user ??
           null;
 
-        const ctxFid: number | null = ctxUser?.fid ?? context?.frameData?.fid ?? null;
+        const ctxFid: number | null =
+          ctxUser?.fid ?? context?.frameData?.fid ?? null;
 
         const profile = {
           username:
@@ -270,7 +293,11 @@ export default function HomePage() {
             ctxUser?.display_name ??
             ctxUser?.name ??
             null,
-          pfpUrl: ctxUser?.pfpUrl ?? ctxUser?.pfp_url ?? ctxUser?.pfp?.url ?? null,
+          pfpUrl:
+            ctxUser?.pfpUrl ??
+            ctxUser?.pfp_url ??
+            ctxUser?.pfp?.url ??
+            null,
         };
 
         const queryFid = getFidFromQuery();
@@ -279,6 +306,8 @@ export default function HomePage() {
         if (!cancelled) {
           setFid(finalFid);
           await loadUserState(finalFid, profile);
+          // ✅ initkor töltsük be a global statot is
+          await refreshGlobalStats();
         }
       } catch (e) {
         console.error("Error reading sdk.context:", e);
@@ -286,6 +315,7 @@ export default function HomePage() {
         if (!cancelled) {
           setFid(queryFid);
           await loadUserState(queryFid, undefined);
+          await refreshGlobalStats();
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -302,6 +332,7 @@ export default function HomePage() {
         openAnimTimerRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- Countdown ----
@@ -316,43 +347,33 @@ export default function HomePage() {
     return () => window.clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
-  // ---- Global stats (Realtime feeling: polling) ----
+  // ✅ REALTIME-ish: polling + refetch amikor visszatér a tab/app
   useEffect(() => {
-    let cancelled = false;
-    let interval: number | null = null;
+    // 10 mp-enként frissít
+    const interval = window.setInterval(() => {
+      void refreshGlobalStats();
+    }, 10_000);
 
-    async function loadGlobalStats() {
-      try {
-        const res = await fetch("/api/global-stats", { cache: "no-store" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          if (!cancelled) setGlobalStatsErr(data?.error || "Failed to load global stats");
-          return;
-        }
-        if (!cancelled) {
-          setGlobalStats(data as GlobalStats);
-          setGlobalStatsErr(null);
-        }
-      } catch {
-        if (!cancelled) setGlobalStatsErr("Failed to load global stats");
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        void refreshGlobalStats();
       }
-    }
+    };
 
-    // first load
-    void loadGlobalStats();
-
-    // then refresh every 8s
-    interval = window.setInterval(() => {
-      void loadGlobalStats();
-    }, 8000);
+    window.addEventListener("focus", onVis);
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
-      cancelled = true;
-      if (interval) window.clearInterval(interval);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onVis);
+      document.removeEventListener("visibilitychange", onVis);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canPick = (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+  const canPick =
+    (user?.freePicksRemaining ?? 0) > 0 ||
+    (user?.extraPicksRemaining ?? 0) > 0;
 
   const isOg = Boolean(user?.isOg);
   const freePicks = Number(user?.freePicksRemaining ?? 0);
@@ -370,7 +391,9 @@ export default function HomePage() {
   // ---- Pick ----
   async function handlePick(boxIndex: number) {
     if (!fid || !user || picking) return;
-    const canNowPick = (user?.freePicksRemaining ?? 0) > 0 || (user?.extraPicksRemaining ?? 0) > 0;
+    const canNowPick =
+      (user?.freePicksRemaining ?? 0) > 0 ||
+      (user?.extraPicksRemaining ?? 0) > 0;
     if (!canNowPick) return;
 
     try {
@@ -412,22 +435,11 @@ export default function HomePage() {
       });
       setShowResultModal(true);
 
+      // ✅ azonnali community refresh, hogy tényleg látszódjon a növekedés
+      void refreshGlobalStats();
+
       // 🎉 confetti
       fireConfetti(data.rarity);
-
-      // ✅ update community stats soon (fast feedback without waiting 8s)
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const r = await fetch("/api/global-stats", { cache: "no-store" });
-            const d = await r.json().catch(() => ({}));
-            if (r.ok) {
-              setGlobalStats(d as GlobalStats);
-              setGlobalStatsErr(null);
-            }
-          } catch {}
-        })();
-      }, 400);
     } catch (err) {
       console.error("Pick failed:", err);
       alert("Something went wrong, try again.");
@@ -439,8 +451,8 @@ export default function HomePage() {
   // ---- Share ----
   async function handleShareResult() {
     if (!lastResult) return;
-    const rarityLabel = lastResult.rarity.toLowerCase();
 
+    const rarityLabel = lastResult.rarity.toLowerCase();
     const text =
       `🎁 Pulled a ${rarityLabel} box on BBOX (+${lastResult.points} pts)\n\n` +
       `Come open your daily boxes 👇`;
@@ -535,7 +547,8 @@ export default function HomePage() {
       const settleData = await settleRes.json().catch(() => ({}));
       if (!settleRes.ok) {
         if (isWrongAmountLike(settleData)) {
-          const label = packSize === 1 ? "1-pack" : packSize === 5 ? "5-pack" : "10-pack";
+          const label =
+            packSize === 1 ? "1-pack" : packSize === 5 ? "5-pack" : "10-pack";
           setBuyInfo(donationInfoText(label));
           setBuyError(null);
           setBuyLoading(false);
@@ -551,6 +564,9 @@ export default function HomePage() {
         username: user?.username ?? null,
         pfpUrl: user?.pfpUrl ?? null,
       });
+
+      // ✅ ha vásárolt, attól még jó frissíteni (nem muszáj, de ártani nem árt)
+      void refreshGlobalStats();
 
       setBuyLoading(false);
       setBuyError(null);
@@ -671,6 +687,8 @@ export default function HomePage() {
         pfpUrl: user?.pfpUrl ?? null,
       });
 
+      void refreshGlobalStats();
+
       setBuyLoading(false);
       setBuyError(null);
       setBuyInfo(null);
@@ -725,8 +743,6 @@ export default function HomePage() {
     );
   }
 
-  const isGlobalStatsLoading = !globalStats && !globalStatsErr;
-
   return (
     <main className="min-h-screen bg-gradient-to-b from-[#02010A] via-[#050315] to-black text-white">
       <div className="max-w-md mx-auto px-4 pb-6 pt-4">
@@ -771,7 +787,8 @@ export default function HomePage() {
               <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
                 {isOg ? (
                   <>
-                   <AnimatedOgPill />
+                    <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">BOX</span>
+                    <AnimatedOgPill />
                   </>
                 ) : (
                   <span>Based</span>
@@ -858,8 +875,7 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening
-              today.
+              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
             </p>
           </div>
         )}
@@ -973,12 +989,11 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  <div className="mt-2 text-[10px] text-gray-500">Auto-updates every 8s</div>
+                  {/* apró jelzés, hogy “él” */}
+                  <div className="mt-2 text-[10px] text-gray-500">Auto-refresh: every 10s</div>
                 </>
               ) : (
-                <div className="mt-2 text-[11px] text-gray-400">
-                  {globalStatsErr ?? (isGlobalStatsLoading ? "Loading…" : "—")}
-                </div>
+                <div className="mt-2 text-[11px] text-gray-400">{globalStatsErr ?? "Loading…"}</div>
               )}
             </div>
           </div>
