@@ -816,7 +816,7 @@ export default function HomePage() {
   src="/pick.png"
   alt="open BBOX"
   className="
-    w-[78%] h-[78%] max-w-[140px] max-h-[140px]
+    w-[90%] h-[90%] max-w-[210px] max-h-[210px]
     object-contain
     drop-shadow-[0_0_35px_rgba(124,58,237,0.65)]
     transition-transform duration-300
