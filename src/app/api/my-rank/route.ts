@@ -13,16 +13,20 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+function noStoreHeaders() {
+  return {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+  };
+}
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => null);
-    const fid = body?.fid as number | undefined;
+    const body = (await req.json().catch(() => null)) as { fid?: number } | null;
+    const fidRaw = body?.fid;
 
-    if (!fid || Number.isNaN(fid)) {
-      return NextResponse.json(
-        { error: "Missing or invalid fid" },
-        { status: 400 }
-      );
+    const fid = typeof fidRaw === "number" ? fidRaw : Number(fidRaw);
+    if (!fid || !Number.isFinite(fid)) {
+      return NextResponse.json({ error: "Missing or invalid fid" }, { status: 400 });
     }
 
     // --- saját stat sor ---
@@ -43,38 +47,13 @@ export async function POST(req: Request) {
 
     if (statsErr) {
       console.error("my-rank stats error:", statsErr);
-      return NextResponse.json(
-        { error: "Failed to load stats" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Failed to load stats" }, { status: 500, headers: noStoreHeaders() });
     }
 
-    if (!stats) {
-      // még nem játszott – nincs sor
-      return NextResponse.json(
-        {
-          fid,
-          username: null,
-          rank: null,
-          total_points: 0,
-          common_count: 0,
-          rare_count: 0,
-          epic_count: 0,
-          legendary_count: 0,
-        },
-        {
-          headers: {
-            "Cache-Control":
-              "no-store, no-cache, must-revalidate, proxy-revalidate",
-          },
-        }
-      );
-    }
-
-    // --- username ---
+    // --- user row (username + is_og) ---
     const { data: user, error: userErr } = await supabase
       .from("users")
-      .select("username")
+      .select("username, is_og")
       .eq("fid", fid)
       .maybeSingle();
 
@@ -82,11 +61,33 @@ export async function POST(req: Request) {
       console.error("my-rank user error:", userErr);
     }
 
+    const isOg = Boolean(user?.is_og);
+
+    if (!stats) {
+      // még nem játszott – nincs user_stats sora
+      return NextResponse.json(
+        {
+          fid,
+          username: user?.username ?? null,
+          is_og: isOg,
+          rank: null,
+          total_points: 0,
+          common_count: 0,
+          rare_count: 0,
+          epic_count: 0,
+          legendary_count: 0,
+        },
+        { headers: noStoreHeaders() }
+      );
+    }
+
     // --- rank kiszámítása: hányan vannak nálad több ponttal? ---
+    const myPoints = Number(stats.total_points ?? 0);
+
     const { count, error: countErr } = await supabase
       .from("user_stats")
       .select("*", { count: "exact", head: true })
-      .gt("total_points", stats.total_points ?? 0);
+      .gt("total_points", myPoints);
 
     if (countErr) {
       console.error("my-rank count error:", countErr);
@@ -98,31 +99,21 @@ export async function POST(req: Request) {
       {
         fid,
         username: user?.username ?? null,
+        is_og: isOg,
         rank,
-        total_points: stats.total_points ?? 0,
-        common_count: stats.common_opens ?? 0,
-        rare_count: stats.rare_opens ?? 0,
-        epic_count: stats.epic_opens ?? 0,
-        legendary_count: stats.legendary_opens ?? 0,
+        total_points: myPoints,
+        common_count: Number(stats.common_opens ?? 0),
+        rare_count: Number(stats.rare_opens ?? 0),
+        epic_count: Number(stats.epic_opens ?? 0),
+        legendary_count: Number(stats.legendary_opens ?? 0),
       },
-      {
-        headers: {
-          "Cache-Control":
-            "no-store, no-cache, must-revalidate, proxy-revalidate",
-        },
-      }
+      { headers: noStoreHeaders() }
     );
   } catch (err) {
     console.error("my-rank route fatal error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
-      {
-        status: 500,
-        headers: {
-          "Cache-Control":
-            "no-store, no-cache, must-revalidate, proxy-revalidate",
-        },
-      }
+      { status: 500, headers: noStoreHeaders() }
     );
   }
 }
