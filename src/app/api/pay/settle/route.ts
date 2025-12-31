@@ -74,6 +74,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid RECEIVER/USDC address" }, { status: 500 });
     }
 
+    // 0) IDEMPOTENCIA: ha tx_hash már completed → ok
+    const { data: existingPay, error: exErr } = await supabase
+      .from("payments")
+      .select("id, status, kind, pack_size, fid, tx_hash")
+      .eq("tx_hash", txHash)
+      .maybeSingle();
+
+    if (exErr) console.error("payments lookup by tx_hash error:", exErr);
+
+    if (existingPay?.status === "completed") {
+      return NextResponse.json({ ok: true, alreadyProcessed: true, txHash });
+    }
+
     const client = createPublicClient({
       chain: base,
       transport: http(RPC_URL),
@@ -130,10 +143,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- DB credit ---
+    // --- DB credit (1x) + payment completed ---
+    const nowIso = new Date().toISOString();
+
     if (kind === "extra_picks") {
       const add = packSize ?? 0;
 
+      // kredit
       const { data: stats, error: sErr } = await supabase
         .from("user_stats")
         .select("fid, extra_picks_remaining")
@@ -144,19 +160,33 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "User stats missing" }, { status: 500 });
       }
 
-      const current = Number((stats as any).extra_picks_remaining ?? 0);
+      const current = Number(stats.extra_picks_remaining ?? 0);
       const next = current + add;
 
       const { error: uErr } = await supabase
         .from("user_stats")
-        .update({ extra_picks_remaining: next, updated_at: new Date().toISOString() })
+        .update({ extra_picks_remaining: next, updated_at: nowIso })
         .eq("fid", fid);
 
       if (uErr) return NextResponse.json({ error: "Failed to credit picks", details: uErr }, { status: 500 });
 
+      // payment: tx_hash + completed (ha nincs is előzetes row, akkor is létrehozzuk)
       await supabase
         .from("payments")
-        .update({ status: "completed", tx_hash: txHash, updated_at: new Date().toISOString() })
+        .insert({
+          fid,
+          kind: "extra_picks",
+          pack_size: packSize ?? null,
+          frame_id: null,
+          tx_hash: txHash,
+          status: "completed",
+        })
+        .catch(() => null);
+
+      // és az esetlegesen létező "pending" sorokat is lezárjuk
+      await supabase
+        .from("payments")
+        .update({ status: "completed", tx_hash: txHash, updated_at: nowIso })
         .eq("fid", fid)
         .eq("kind", "extra_picks")
         .eq("pack_size", packSize ?? null)
@@ -166,31 +196,24 @@ export async function POST(req: Request) {
     }
 
     if (kind === "og_rank") {
-      // 1) OG flag
       const { error: uErr } = await supabase.from("users").update({ is_og: true }).eq("fid", fid);
       if (uErr) return NextResponse.json({ error: "Failed to set OG", details: uErr }, { status: 500 });
 
-      // 2) ✅ Instant OG bonus: +1 free pick now, BUT capped at 2 (so no “3 free picks”)
-      const { data: stats, error: sErr } = await supabase
-        .from("user_stats")
-        .select("fid, free_picks_remaining, next_free_pick_at")
-        .eq("fid", fid)
-        .maybeSingle();
-
-      if (!sErr && stats) {
-        const currentFree = Number((stats as any).free_picks_remaining ?? 0);
-        const capped = Math.min(2, currentFree + 1); // +1 now, max 2
-        if (capped !== currentFree) {
-          await supabase
-            .from("user_stats")
-            .update({ free_picks_remaining: capped, updated_at: new Date().toISOString() })
-            .eq("fid", fid);
-        }
-      }
+      await supabase
+        .from("payments")
+        .insert({
+          fid,
+          kind: "og_rank",
+          pack_size: null,
+          frame_id: null,
+          tx_hash: txHash,
+          status: "completed",
+        })
+        .catch(() => null);
 
       await supabase
         .from("payments")
-        .update({ status: "completed", tx_hash: txHash, updated_at: new Date().toISOString() })
+        .update({ status: "completed", tx_hash: txHash, updated_at: nowIso })
         .eq("fid", fid)
         .eq("kind", "og_rank")
         .eq("status", "pending");
