@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { sdk } from "@farcaster/miniapp-sdk";
 import type { ApiUserState } from "@/types";
+import confetti from "canvas-confetti";
 
 const BBOX_URL = "https://box-sage.vercel.app";
 
@@ -104,6 +105,75 @@ function AnimatedOgPill() {
       </span>
     </span>
   );
+}
+
+function fireConfetti(rarity: BoxRarity) {
+  const base = {
+    spread: 70,
+    origin: { y: 0.65 },
+    ticks: 200,
+  };
+
+  const intensity =
+    rarity === "LEGENDARY"
+      ? 1.0
+      : rarity === "EPIC"
+      ? 0.7
+      : rarity === "RARE"
+      ? 0.45
+      : 0.25;
+
+  const particleCount = Math.floor(120 * intensity) + 30;
+
+  confetti({ ...base, particleCount, angle: 60, startVelocity: 45 });
+  confetti({ ...base, particleCount, angle: 120, startVelocity: 45 });
+
+  if (rarity === "LEGENDARY") {
+    setTimeout(() => {
+      confetti({
+        particleCount: 180,
+        spread: 120,
+        origin: { y: 0.2 },
+        startVelocity: 35,
+        ticks: 260,
+      });
+    }, 180);
+  }
+}
+
+/**
+ * Share: mobilon + böngészőben is működjön.
+ * - Farcaster MiniApp hostban: sdk.actions.openUrl()
+ * - Fallback: window.open / location.href
+ * - Compose endpoint: warpcast.com (a farcaster.com/~/compose sokszor 403/404)
+ */
+async function openShareUrl(url: string) {
+  // 1) MiniApp SDK
+  try {
+    await sdk.actions.openUrl(url);
+    return;
+  } catch {
+    // ignore, jön a fallback
+  }
+
+  // 2) Browser fallback
+  if (typeof window !== "undefined") {
+    try {
+      const w = window.open(url, "_blank", "noopener,noreferrer");
+      if (w) return;
+    } catch {
+      // ignore
+    }
+    window.location.href = url;
+  }
+}
+
+function buildWarpcastComposeUrl(text: string, embedUrl?: string) {
+  const base = "https://warpcast.com/~/compose";
+  const params = new URLSearchParams();
+  params.set("text", text);
+  if (embedUrl) params.append("embeds[]", embedUrl);
+  return `${base}?${params.toString()}`;
 }
 
 export default function HomePage() {
@@ -278,6 +348,9 @@ export default function HomePage() {
         openedAt: new Date().toISOString(),
       });
       setShowResultModal(true);
+
+      // 🎉 confetti
+      fireConfetti(data.rarity);
     } catch (err) {
       console.error("Pick failed:", err);
       alert("Something went wrong, try again.");
@@ -293,12 +366,11 @@ export default function HomePage() {
     const rarityLabel = lastResult.rarity.toLowerCase();
     const fullText = `I just opened a ${rarityLabel} box on BBOX and earned +${lastResult.points} points! 🎁\n\nPlay BBOX here: ${BBOX_URL}`;
 
-    const composeUrl = `https://farcaster.com/~/compose?text=${encodeURIComponent(
-      fullText
-    )}&embeds[]=${encodeURIComponent(BBOX_URL)}`;
+    // ✅ warpcast compose (mobil + browser barát)
+    const composeUrl = buildWarpcastComposeUrl(fullText, BBOX_URL);
 
     try {
-      await sdk.actions.openUrl(composeUrl);
+      await openShareUrl(composeUrl);
     } catch (e) {
       console.error("Share failed:", e);
       alert("Could not open share dialog.");
@@ -600,7 +672,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* ✅ Header stabil: nincs OG badge a usernév mellett */}
+          {/* Header stabil */}
           <div className="flex items-center gap-2 min-w-0">
             {user?.pfpUrl ? (
               <img
@@ -616,8 +688,6 @@ export default function HomePage() {
 
             <div className="text-right min-w-0">
               <div className="text-sm font-medium truncate max-w-[150px]">{displayName}</div>
-
-              {/* ✅ Itt cseréljük le a BOX OG sort animált OG-ra */}
               <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
                 {isOg ? (
                   <>
@@ -658,7 +728,6 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* ✅ Next free box + OG copy röviden + CTA (nem OG esetén) */}
               <div className="text-[11px] mt-2 flex items-start justify-between gap-2 text-[#A6B0FF]/80">
                 <span className="shrink-0">Next free box:</span>
                 <div className="text-right">
@@ -667,9 +736,7 @@ export default function HomePage() {
                   </div>
 
                   {isOg ? (
-                    <div className="mt-1 text-[10px] text-purple-200/90">
-                      +1 extra box as OG
-                    </div>
+                    <div className="mt-1 text-[10px] text-purple-200/90">+1 extra box as OG</div>
                   ) : (
                     <button
                       onClick={() => {
@@ -679,7 +746,7 @@ export default function HomePage() {
                       }}
                       className="mt-1 text-[10px] text-purple-200/90 hover:text-purple-200 underline decoration-dotted"
                     >
-                     → Become OG
+                      → Become OG
                     </button>
                   )}
                 </div>
@@ -835,7 +902,7 @@ export default function HomePage() {
             <div className="text-center mt-1 mb-3">
               <h3 className="text-sm font-semibold mb-1">Buy extra picks</h3>
               <p className="text-[11px] text-gray-400">
-                This opens a native Farcaster wallet confirmation (no new tab).
+                This opens a native Farcaster wallet confirmation.
               </p>
             </div>
 
@@ -888,9 +955,7 @@ export default function HomePage() {
             )}
 
             {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Waiting for confirmation…
-              </p>
+              <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>
             )}
           </div>
         </div>
@@ -930,9 +995,7 @@ export default function HomePage() {
                     : "bg-purple-700 hover:bg-purple-600 text-white"
                 }`}
             >
-              {user?.isOg
-                ? "You’re already OG ✅"
-                : `Become OG (${process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)`}
+              {user?.isOg ? "You’re already OG ✅" : `Become OG (${process.env.NEXT_PUBLIC_BBOX_OG_PRICE ?? "5.0"} USDC)`}
             </button>
 
             <button
@@ -954,11 +1017,7 @@ export default function HomePage() {
               </div>
             )}
 
-            {buyLoading && (
-              <p className="mt-2 text-[11px] text-gray-400 text-center">
-                Waiting for confirmation…
-              </p>
-            )}
+            {buyLoading && <p className="mt-2 text-[11px] text-gray-400 text-center">Waiting for confirmation…</p>}
           </div>
         </div>
       )}
