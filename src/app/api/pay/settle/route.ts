@@ -3,8 +3,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createPublicClient, decodeFunctionData, http, isAddress } from "viem";
 import { base } from "viem/chains";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const RPC_URL = process.env.BASE_RPC_URL || "https://mainnet.base.org";
 const RECEIVER_ADDRESS = process.env.NEYNAR_PAY_RECEIVER_ADDRESS!;
@@ -22,8 +25,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// 10 perc után a “pending” purchase-t tekintsük megszakadtnak,
-// hogy a user tudjon újra próbálkozni.
+// 10 perc után a “pending” purchase-t tekintsük megszakadtnak
 const PENDING_TTL_MINUTES = 10;
 
 const erc20Abi = [
@@ -40,7 +42,12 @@ const erc20Abi = [
 ] as const;
 
 type Body =
-  | { fid: number; kind: "extra_picks"; packSize: 1 | 5 | 10; txHash: `0x${string}` }
+  | {
+      fid: number;
+      kind: "extra_picks";
+      packSize: 1 | 5 | 10;
+      txHash: `0x${string}`;
+    }
   | { fid: number; kind: "og_rank"; txHash: `0x${string}` };
 
 function toUnits6(s: string): bigint {
@@ -65,25 +72,47 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Body | null;
 
-    const fid = (body as any)?.fid as number | undefined;
+    const fid = Number((body as any)?.fid);
     const kind = (body as any)?.kind as Body["kind"] | undefined;
     const txHash = (body as any)?.txHash as `0x${string}` | undefined;
     const packSize = (body as any)?.packSize as 1 | 5 | 10 | undefined;
 
     if (!fid || !Number.isFinite(fid) || !kind || !txHash) {
-      return NextResponse.json({ error: "Missing fid/kind/txHash" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing fid/kind/txHash" },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
     }
 
+    // ✅ Rate limit (SETTLE)
+    // settle lehet többször retry-olva, ezért engedékenyebb:
+    // - IP: 30 / perc
+    // - FID: 15 / perc
+    // action-ban elkülönítjük a kind-et is
+    const rl = await enforceRateLimit(req, {
+      action: `pay_settle_${kind}`,
+      fid,
+      windowSeconds: 60,
+      ipLimit: 30,
+      fidLimit: 15,
+    });
+    if (rl) return rl;
+
     if (!RECEIVER_ADDRESS || !USDC_CONTRACT) {
-      return NextResponse.json({ error: "Server misconfigured (missing env)" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Server misconfigured (missing env)" },
+        { status: 500, headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     if (!isAddress(RECEIVER_ADDRESS) || !isAddress(USDC_CONTRACT)) {
-      return NextResponse.json({ error: "Invalid RECEIVER/USDC address" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Invalid RECEIVER/USDC address" },
+        { status: 500, headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     // --- 0) Idempotencia: ha már volt ilyen txHash feldolgozva, ne krediteljünk újra ---
-    // (frame_id mezőben tároljuk a txHash-t)
     {
       const { data: already, error: aErr } = await supabase
         .from("payments")
@@ -91,30 +120,26 @@ export async function POST(req: Request) {
         .eq("frame_id", txHash)
         .maybeSingle();
 
-      // ha a select hibázik, nem állunk meg, csak logoljuk
       if (aErr) console.warn("payments idempotency check error:", aErr);
 
       if (already?.status === "completed") {
-        return NextResponse.json({ ok: true, txHash, alreadyProcessed: true });
+        return NextResponse.json(
+          { ok: true, txHash, alreadyProcessed: true },
+          { headers: { "Cache-Control": "no-store" } }
+        );
       }
     }
 
-    // --- 1) Pending “beragadás” kezelése: régi pending sorok lezárása ---
-    // (hogy új vásárlást tudjon indítani)
-    // NOTE: Ha nálad nincs 'cancelled' status, cseréld 'failed'-re.
+    // --- 1) régi pending sorok lezárása ---
     try {
       const cutoff = isoMinutesAgo(PENDING_TTL_MINUTES);
 
-      // extra_picks pendingek (minden pack)
       await supabase
         .from("payments")
         .update({ status: "cancelled", updated_at: new Date().toISOString() })
         .eq("fid", fid)
         .eq("status", "pending")
         .lt("created_at", cutoff);
-
-      // (opcionális) csak az adott kind-et is lehetne szűrni,
-      // de így minden régi pendinget takarítunk.
     } catch (e) {
       console.warn("pending cleanup failed (non-fatal):", e);
     }
@@ -129,21 +154,23 @@ export async function POST(req: Request) {
     if (!tx) {
       return NextResponse.json(
         { error: "Transaction not found yet", hint: "Wait 3-10 seconds, then try again." },
-        { status: 400 }
+        { status: 400, headers: { "Cache-Control": "no-store" } }
       );
     }
 
-    // USDC contract call expected
     if ((tx.to || "").toLowerCase() !== USDC_CONTRACT.toLowerCase()) {
       return NextResponse.json(
         { error: "Wrong contract", details: { expectedTo: USDC_CONTRACT, actualTo: tx.to } },
-        { status: 400 }
+        { status: 400, headers: { "Cache-Control": "no-store" } }
       );
     }
 
     const decoded = decodeFunctionData({ abi: erc20Abi, data: tx.input });
     if (decoded.functionName !== "transfer") {
-      return NextResponse.json({ error: "Not an ERC20 transfer" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Not an ERC20 transfer" },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     const [to, amount] = decoded.args as [`0x${string}`, bigint];
@@ -151,18 +178,15 @@ export async function POST(req: Request) {
     if (to.toLowerCase() !== RECEIVER_ADDRESS.toLowerCase()) {
       return NextResponse.json(
         { error: "Wrong receiver", details: { expectedReceiver: RECEIVER_ADDRESS, actualReceiver: to } },
-        { status: 400 }
+        { status: 400, headers: { "Cache-Control": "no-store" } }
       );
     }
 
     const exp = expectedAmount(kind, packSize);
     if (amount !== exp) {
       return NextResponse.json(
-        {
-          error: "Wrong amount",
-          details: { expected: exp.toString(), actual: amount.toString(), kind, packSize },
-        },
-        { status: 400 }
+        { error: "Wrong amount", details: { expected: exp.toString(), actual: amount.toString(), kind, packSize } },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
       );
     }
 
@@ -175,7 +199,7 @@ export async function POST(req: Request) {
           hint: "Wait 3-10 seconds, then try again.",
           details: { status: receipt?.status ?? "missing" },
         },
-        { status: 400 }
+        { status: 400, headers: { "Cache-Control": "no-store" } }
       );
     }
 
@@ -190,7 +214,10 @@ export async function POST(req: Request) {
         .maybeSingle();
 
       if (sErr || !stats) {
-        return NextResponse.json({ error: "User stats missing" }, { status: 500 });
+        return NextResponse.json(
+          { error: "User stats missing" },
+          { status: 500, headers: { "Cache-Control": "no-store" } }
+        );
       }
 
       const current = Number(stats.extra_picks_remaining ?? 0);
@@ -201,9 +228,13 @@ export async function POST(req: Request) {
         .update({ extra_picks_remaining: next, updated_at: new Date().toISOString() })
         .eq("fid", fid);
 
-      if (uErr) return NextResponse.json({ error: "Failed to credit picks", details: uErr }, { status: 500 });
+      if (uErr) {
+        return NextResponse.json(
+          { error: "Failed to credit picks", details: uErr },
+          { status: 500, headers: { "Cache-Control": "no-store" } }
+        );
+      }
 
-      // először próbáljuk a megfelelő pending sort completed-re állítani
       const { data: updatedRows, error: pErr } = await supabase
         .from("payments")
         .update({ status: "completed", frame_id: txHash, updated_at: new Date().toISOString() })
@@ -215,8 +246,6 @@ export async function POST(req: Request) {
 
       if (pErr) console.warn("payments update (extra_picks) error:", pErr);
 
-      // ha nem volt pending sor (pl. régi cleanup miatt), tegyünk be egy completed rekordot,
-      // hogy később auditálható legyen
       if (!updatedRows || updatedRows.length === 0) {
         const { error: insErr } = await supabase.from("payments").insert({
           fid,
@@ -228,16 +257,25 @@ export async function POST(req: Request) {
         if (insErr) console.warn("payments insert (extra_picks completed) error:", insErr);
       }
 
-      return NextResponse.json({ ok: true, credited: add, txHash });
+      return NextResponse.json(
+        { ok: true, credited: add, txHash },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     if (kind === "og_rank") {
+      // ✅ FIX: users tábládban NINCS updated_at, ezért csak is_og-t írunk
       const { error: uErr } = await supabase
         .from("users")
-        .update({ is_og: true, updated_at: new Date().toISOString() })
+        .update({ is_og: true })
         .eq("fid", fid);
 
-      if (uErr) return NextResponse.json({ error: "Failed to set OG", details: uErr }, { status: 500 });
+      if (uErr) {
+        return NextResponse.json(
+          { error: "Failed to set OG", details: uErr },
+          { status: 500, headers: { "Cache-Control": "no-store" } }
+        );
+      }
 
       const { data: updatedRows, error: pErr } = await supabase
         .from("payments")
@@ -260,15 +298,21 @@ export async function POST(req: Request) {
         if (insErr) console.warn("payments insert (og_rank completed) error:", insErr);
       }
 
-      return NextResponse.json({ ok: true, txHash });
+      return NextResponse.json(
+        { ok: true, txHash },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
-    return NextResponse.json({ error: "Unsupported kind" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Unsupported kind" },
+      { status: 400, headers: { "Cache-Control": "no-store" } }
+    );
   } catch (e: any) {
     console.error("Error in /api/pay/settle:", e);
     return NextResponse.json(
       { error: "Internal server error", details: String(e?.message ?? e) },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
