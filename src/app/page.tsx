@@ -182,6 +182,48 @@ function buildWarpcastComposeUrl(text: string, embedUrl?: string) {
   return `${base}?${params.toString()}`;
 }
 
+// ✅ EVM address extractor (több lehetséges context mezőből)
+function extractEvmAddress(context: any, ctxUser: any): string | null {
+  const candidates: any[] = [
+    // gyakori mezők user-en
+    ctxUser?.custodyAddress,
+    ctxUser?.custody_address,
+    ctxUser?.address,
+    ctxUser?.walletAddress,
+    ctxUser?.wallet_address,
+
+    // context-en
+    context?.custodyAddress,
+    context?.custody_address,
+    context?.address,
+
+    // frameData-n
+    context?.frameData?.custodyAddress,
+    context?.frameData?.custody_address,
+    context?.frameData?.address,
+
+    // verified addresses (többféle shape)
+    ctxUser?.verifiedAddresses?.ethAddresses?.[0],
+    ctxUser?.verified_addresses?.eth_addresses?.[0],
+    context?.verifiedAddresses?.ethAddresses?.[0],
+    context?.verified_addresses?.eth_addresses?.[0],
+  ];
+
+  for (const c of candidates) {
+    if (!c) continue;
+    if (typeof c === "string") {
+      const s = c.trim();
+      if (/^0x[a-fA-F0-9]{40}$/.test(s)) return s;
+    }
+    if (Array.isArray(c) && typeof c[0] === "string") {
+      const s = String(c[0]).trim();
+      if (/^0x[a-fA-F0-9]{40}$/.test(s)) return s;
+    }
+  }
+
+  return null;
+}
+
 export default function HomePage() {
   const [fid, setFid] = useState<number | null>(null);
   const [user, setUser] = useState<ApiUserState | null>(null);
@@ -210,7 +252,7 @@ export default function HomePage() {
 
   async function loadUserState(
     currentFid: number | null,
-    profile?: { username?: string | null; pfpUrl?: string | null }
+    profile?: { username?: string | null; pfpUrl?: string | null; address?: string | null } // ✅ address
   ) {
     if (!currentFid) return;
     try {
@@ -221,6 +263,7 @@ export default function HomePage() {
           fid: currentFid,
           username: profile?.username ?? null,
           pfpUrl: profile?.pfpUrl ?? null,
+          address: profile?.address ?? null, // ✅ elküldjük
         }),
         cache: "no-store",
       });
@@ -298,6 +341,7 @@ export default function HomePage() {
             ctxUser?.pfp_url ??
             ctxUser?.pfp?.url ??
             null,
+          address: extractEvmAddress(context, ctxUser), // ✅ ÚJ
         };
 
         const queryFid = getFidFromQuery();
@@ -563,9 +607,10 @@ export default function HomePage() {
       await loadUserState(fid, {
         username: user?.username ?? null,
         pfpUrl: user?.pfpUrl ?? null,
+        address: (user as any)?.address ?? null,
       });
 
-      // ✅ ha vásárolt, attól még jó frissíteni (nem muszáj, de ártani nem árt)
+      // ✅ ha vásárolt, attól még jó frissíteni
       void refreshGlobalStats();
 
       setBuyLoading(false);
@@ -685,6 +730,7 @@ export default function HomePage() {
       await loadUserState(fid, {
         username: user?.username ?? null,
         pfpUrl: user?.pfpUrl ?? null,
+        address: (user as any)?.address ?? null,
       });
 
       void refreshGlobalStats();
@@ -787,7 +833,6 @@ export default function HomePage() {
               <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
                 {isOg ? (
                   <>
-                   
                     <AnimatedOgPill />
                   </>
                 ) : (
@@ -989,7 +1034,6 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {/* apró jelzés, hogy “él” */}
                   <div className="mt-2 text-[10px] text-gray-500">Auto-refresh: every 10s</div>
                 </>
               ) : (
