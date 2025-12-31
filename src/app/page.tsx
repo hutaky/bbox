@@ -316,28 +316,39 @@ export default function HomePage() {
     return () => window.clearInterval(interval);
   }, [user?.nextFreePickAt]);
 
-  // ---- Global stats ----
+  // ---- Global stats (Realtime feeling: polling) ----
   useEffect(() => {
     let cancelled = false;
+    let interval: number | null = null;
 
     async function loadGlobalStats() {
       try {
-        setGlobalStatsErr(null);
         const res = await fetch("/api/global-stats", { cache: "no-store" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           if (!cancelled) setGlobalStatsErr(data?.error || "Failed to load global stats");
           return;
         }
-        if (!cancelled) setGlobalStats(data as GlobalStats);
+        if (!cancelled) {
+          setGlobalStats(data as GlobalStats);
+          setGlobalStatsErr(null);
+        }
       } catch {
         if (!cancelled) setGlobalStatsErr("Failed to load global stats");
       }
     }
 
+    // first load
     void loadGlobalStats();
+
+    // then refresh every 8s
+    interval = window.setInterval(() => {
+      void loadGlobalStats();
+    }, 8000);
+
     return () => {
       cancelled = true;
+      if (interval) window.clearInterval(interval);
     };
   }, []);
 
@@ -403,6 +414,20 @@ export default function HomePage() {
 
       // 🎉 confetti
       fireConfetti(data.rarity);
+
+      // ✅ update community stats soon (fast feedback without waiting 8s)
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const r = await fetch("/api/global-stats", { cache: "no-store" });
+            const d = await r.json().catch(() => ({}));
+            if (r.ok) {
+              setGlobalStats(d as GlobalStats);
+              setGlobalStatsErr(null);
+            }
+          } catch {}
+        })();
+      }, 400);
     } catch (err) {
       console.error("Pick failed:", err);
       alert("Something went wrong, try again.");
@@ -416,12 +441,10 @@ export default function HomePage() {
     if (!lastResult) return;
     const rarityLabel = lastResult.rarity.toLowerCase();
 
-    // ✅ ütősebb copy (rövid, mobilbarát)
     const text =
       `🎁 Pulled a ${rarityLabel} box on BBOX (+${lastResult.points} pts)\n\n` +
       `Come open your daily boxes 👇`;
 
-    // ✅ a Farcaster miniapps linket embedeljük (szép preview)
     const composeUrl = buildWarpcastComposeUrl(text, SHARE_APP_URL);
 
     try {
@@ -702,6 +725,8 @@ export default function HomePage() {
     );
   }
 
+  const isGlobalStatsLoading = !globalStats && !globalStatsErr;
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-[#02010A] via-[#050315] to-black text-white">
       <div className="max-w-md mx-auto px-4 pb-6 pt-4">
@@ -746,8 +771,7 @@ export default function HomePage() {
               <div className="text-[11px] text-[#F4F0FF]/80 flex items-center justify-end gap-2">
                 {isOg ? (
                   <>
-                    <span className="uppercase tracking-[0.18em] text-[#9CA3FF]/90">BOX</span>
-                    <AnimatedOgPill />
+                   <AnimatedOgPill />
                   </>
                 ) : (
                   <span>Based</span>
@@ -834,7 +858,8 @@ export default function HomePage() {
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             <div className="font-semibold mb-1">No boxes left to open</div>
             <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
+              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening
+              today.
             </p>
           </div>
         )}
@@ -862,11 +887,9 @@ export default function HomePage() {
                         : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
                     }`}
                 >
-                  {/* hover overlayek */}
                   <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/25 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                   <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
 
-                  {/* ✅ FULL FILL + OPENING ANIM (scale + blur + fade) */}
                   <div className="absolute inset-0 z-10 flex items-center justify-center">
                     <img
                       src="/pick.png"
@@ -925,8 +948,6 @@ export default function HomePage() {
         <section className="mt-3 flex justify-center">
           <div className="w-full rounded-3xl border border-[#151836] bg-gradient-to-br from-[#050315] via-[#05081F] to-black px-4 py-3 shadow-[0_0_22px_rgba(0,0,0,0.65)]">
             <div className="text-center">
-             {/* <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/80">Community opens</div>*/}
-
               {globalStats ? (
                 <>
                   <div className="mt-1 text-sm font-semibold text-[#E6EBFF]">
@@ -951,9 +972,13 @@ export default function HomePage() {
                       <div className="text-sm font-bold text-legendary">{globalStats.legendary.toLocaleString()}</div>
                     </div>
                   </div>
+
+                  <div className="mt-2 text-[10px] text-gray-500">Auto-updates every 8s</div>
                 </>
               ) : (
-                <div className="mt-2 text-[11px] text-gray-400">{globalStatsErr ?? "Loading…"}</div>
+                <div className="mt-2 text-[11px] text-gray-400">
+                  {globalStatsErr ?? (isGlobalStatsLoading ? "Loading…" : "—")}
+                </div>
               )}
             </div>
           </div>
@@ -972,9 +997,7 @@ export default function HomePage() {
             </button>
             <div className="text-center mt-2">
               <div className="mb-3 flex justify-center">{renderRarityBadge(lastResult.rarity)}</div>
-              <h3 className="text-sm font-semibold mb-2">
-                You opened a {renderRarityLabel(lastResult.rarity)}!
-              </h3>
+              <h3 className="text-sm font-semibold mb-2">You opened a {renderRarityLabel(lastResult.rarity)}!</h3>
               <p className="text-lg font-bold text-[#00C2FF] mb-1">Reward: +{lastResult.points} points</p>
               <p className="text-xs text-gray-400 mb-4">Keep opening boxes to climb the leaderboard.</p>
               <button
