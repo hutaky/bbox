@@ -930,7 +930,7 @@ export default function HomePage() {
               {globalStats ? (
                 <>
                   <div className="mt-1 text-sm font-semibold text-[#E6EBFF]">
-                    Community opens total: {globalStats.total.toLocaleString()} boxes
+                    Community opened a total of {globalStats.total.toLocaleString()} boxes
                   </div>
 
                   <div className="mt-2 grid grid-cols-4 gap-2 text-center">
