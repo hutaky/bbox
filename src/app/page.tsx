@@ -1047,9 +1047,17 @@ export default function HomePage() {
           />
 
           {/* alsó label */}
-          <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center z-10">
-            <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
-          </div>
+<div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 z-10">
+  <span className="px-2 py-0.5 rounded-full text-[10px] font-medium
+    bg-black/50 backdrop-blur
+    text-gray-300
+    opacity-70
+    group-hover:opacity-100
+    transition">
+    Tap to open
+  </span>
+</div>
+
         </button>
       );
     })}
