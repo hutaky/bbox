@@ -1,0 +1,41 @@
+/* --- Season banner marquee --- */
+.marquee {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.marquee__inner {
+  display: inline-flex;
+  align-items: center;
+  will-change: transform;
+  animation: marquee 18s linear infinite;
+}
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* Pause on hover (desktop) */
+@media (hover: hover) {
+  .marquee:hover .marquee__inner {
+    animation-play-state: paused;
+  }
+}
+
+/* Reduced motion: disable animation and show fallback */
+@media (prefers-reduced-motion: reduce) {
+  .marquee__inner {
+    animation: none;
+  }
+  .marquee {
+    display: none;
+  }
+  .marquee--reduced {
+    display: block !important;
+  }
+}
