@@ -217,7 +217,7 @@ export default function FaqPage() {
             </span>
           </p>
           <p className="text-[11px] text-slate-400">
-            Important: If you edit the amount in the wallet confirmation screen, picks won’t be added (it’s treated as a donation).
+            Important: We currently only accept USDC payments on the BASE network. If you edit the amount in the wallet confirmation screen, picks won’t be added (it’s treated as a donation). 
           </p>
         </Section>
 
