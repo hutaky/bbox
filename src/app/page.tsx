@@ -182,6 +182,26 @@ function buildWarpcastComposeUrl(text: string, embedUrl?: string) {
   return `${base}?${params.toString()}`;
 }
 
+// ✅ Season banner config (állítsd be a Season végét)
+const SEASON_END_ISO = "2026-02-01T00:00:00.000Z"; // <-- állítsd át
+
+function formatTimeLeft(targetIso: string) {
+  const target = new Date(targetIso).getTime();
+  const now = Date.now();
+  let diff = target - now;
+  if (diff <= 0) return "Ended";
+
+  const totalSeconds = Math.floor(diff / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+
 // ✅ EVM address extractor (több lehetséges context mezőből)
 function extractEvmAddress(context: any, ctxUser: any): string | null {
   const candidates: any[] = [
@@ -230,6 +250,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [picking, setPicking] = useState(false);
   const [countdown, setCountdown] = useState<string>("");
+  const [seasonLeft, setSeasonLeft] = useState<string>(() => formatTimeLeft(SEASON_END_ISO));
 
   const [lastResult, setLastResult] = useState<LastResult | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
@@ -390,6 +411,14 @@ export default function HomePage() {
     }, 1000);
     return () => window.clearInterval(interval);
   }, [user?.nextFreePickAt]);
+
+  useEffect(() => {
+  const interval = window.setInterval(() => {
+    setSeasonLeft(formatTimeLeft(SEASON_END_ISO));
+  }, 60_000); // elég percenként
+  return () => window.clearInterval(interval);
+}, []);
+
 
   // ✅ REALTIME-ish: polling + refetch amikor visszatér a tab/app
   useEffect(() => {
@@ -915,6 +944,58 @@ export default function HomePage() {
             </div>
           </div>
         </section>
+{/* ✅ SEASON BANNER (marquee + reduced-motion fallback) */}
+<section className="mb-3">
+  <div className="rounded-3xl border border-[#151836] bg-gradient-to-br from-[#050315] via-[#05081F] to-black shadow-[0_0_22px_rgba(0,0,0,0.65)] overflow-hidden">
+    {/* top thin strip */}
+    <div className="px-4 py-2 border-b border-[#151836] flex items-center justify-between gap-3">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-[#9CA3FF]/80">
+        Season 0
+      </div>
+      <div className="text-[10px] text-gray-400">
+        Ends in <span className="font-semibold text-emerald-200">{seasonLeft}</span>
+      </div>
+    </div>
+
+    {/* marquee row */}
+    <div className="relative">
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-black via-black/70 to-transparent" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-black via-black/70 to-transparent" />
+
+      <div className="py-2">
+        <div className="marquee text-[12px] text-slate-200">
+          <div className="marquee__inner">
+            <span className="mx-6">
+              ⏳ Season ends in <b>{seasonLeft}</b>
+            </span>
+            <span className="mx-6">
+              🏆 Prize pool funded by purchases
+            </span>
+            <span className="mx-6">
+              📈 Climb the leaderboard daily
+            </span>
+
+            {/* duplicate for seamless loop */}
+            <span className="mx-6" aria-hidden="true">
+              ⏳ Season ends in <b>{seasonLeft}</b>
+            </span>
+            <span className="mx-6" aria-hidden="true">
+              🏆 Prize pool funded by purchases
+            </span>
+            <span className="mx-6" aria-hidden="true">
+              📈 Climb the leaderboard daily
+            </span>
+          </div>
+        </div>
+
+        {/* reduced motion fallback */}
+        <div className="marquee--reduced px-4 text-[12px] text-slate-200 hidden">
+          ⏳ Season ends in <b>{seasonLeft}</b> · 🏆 Prize pool funded by purchases
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
         {!canPick && (
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
