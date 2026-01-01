@@ -999,76 +999,78 @@ export default function HomePage() {
 
         {!canPick && (
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
-            <div className="font-semibold mb-1">No boxes left to open</div>
-            <p className="text-[11px]">
-              Wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening today.
+            
+            <p className="text-[9px]">
+              No boxes left to open - wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening.
             </p>
           </div>
         )}
 
-        {/* BOX GRID */}
-        <section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-medium">Pick your box</h2>
-            <span className="text-[11px] text-gray-400">One pick = one opening</span>
+{/* BOX GRID */}
+<section className="bg-gradient-to-br from-[#05081F] via-[#050315] to-black border border-[#151836] rounded-3xl px-4 py-4 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
+  <div className="flex items-center justify-between mb-2">
+    <h2 className="text-sm font-medium">Pick your box</h2>
+    <span className="text-[11px] text-gray-400">One tap = one opening</span>
+  </div>
+
+  <div className="grid grid-cols-3 gap-3 mb-4">
+    {[0, 1, 2].map((index) => {
+      const isOpening = openAnimIndex === index && picking;
+
+      return (
+        <button
+          key={index}
+          onClick={() => handlePick(index)}
+          disabled={!canPick || picking}
+          className={`group relative aspect-square rounded-2xl overflow-hidden border transition-all duration-300
+            ${
+              !canPick || picking
+                ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] cursor-not-allowed opacity-60"
+                : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
+            }`}
+        >
+          {/* hover overlayek */}
+          <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/25 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
+
+          {/* KÉP: kitölti a kártyát */}
+          <img
+            src="/pick.png"
+            alt="open BBOX"
+            className={[
+              "absolute inset-0 w-full h-full object-cover", // ✅ fill
+              "drop-shadow-[0_0_55px_rgba(124,58,237,0.85)]",
+              "transition-all duration-500 ease-out",
+              "group-hover:scale-110",
+              isOpening ? "scale-[1.22] blur-[2px] opacity-0" : "scale-100 blur-0 opacity-100",
+            ].join(" ")}
+          />
+
+          {/* alsó label */}
+          <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center z-10">
+            <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
           </div>
+        </button>
+      );
+    })}
+  </div>
 
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            {[0, 1, 2].map((index) => {
-              const isOpening = openAnimIndex === index && picking;
+  <button
+    onClick={() => (canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true))}
+    disabled={picking}
+    className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
+      ${
+        picking
+          ? "bg-zinc-800 text-zinc-500 cursor-not-allowed shadow-none"
+          : canPick
+          ? "bg-gradient-to-r from-[#38BDF8] via-[#00C2FF] to-[#22C55E] text-black"
+          : "bg-gradient-to-r from-emerald-500 to-[#00C2FF] text-black"
+      }`}
+  >
+    {picking ? "Opening..." : canPick ? "Random open" : "Buy extra"}
+  </button>
+</section>
 
-              return (
-                <button
-                  key={index}
-                  onClick={() => handlePick(index)}
-                  disabled={!canPick || picking}
-                  className={`group relative aspect-square rounded-2xl overflow-hidden border transition-all duration-300
-                    ${
-                      !canPick || picking
-                        ? "border-zinc-700 bg-gradient-to-br from-[#050315] to-[#0B0B1A] cursor-not-allowed opacity-60"
-                        : "border-[#2735A8] bg-gradient-to-br from-[#0B102F] via-[#050315] to-[#02010A] hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
-                    }`}
-                >
-                  <div className="absolute inset-0 bg-gradient-to-br from-[#00C2FF]/25 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <div className="absolute inset-0 translate-x-[-120%] skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:translate-x-[120%] transition-transform duration-700 ease-out" />
-
-                  <div className="absolute inset-0 z-10 flex items-center justify-center">
-                    <img
-                      src="/pick.png"
-                      alt="open BBOX"
-                      className={[
-                        "w-full h-full p-4 object-contain",
-                        "drop-shadow-[0_0_60px_rgba(124,58,237,0.85)]",
-                        "transition-all duration-500 ease-out",
-                        "group-hover:scale-110",
-                        isOpening ? "scale-[1.22] blur-[2px] opacity-0" : "scale-100 blur-0 opacity-100",
-                      ].join(" ")}
-                    />
-                  </div>
-
-                  <div className="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur px-2 py-1 text-center">
-                    <span className="text-[11px] text-gray-300 group-hover:text-white transition">Tap to open</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={() => (canPick ? handlePick(Math.floor(Math.random() * 3)) : setShowBuyModal(true))}
-            disabled={picking}
-            className={`w-full py-2.5 rounded-2xl text-sm font-semibold transition shadow-[0_0_26px_rgba(56,189,248,0.65)]
-              ${
-                picking
-                  ? "bg-zinc-800 text-zinc-500 cursor-not-allowed shadow-none"
-                  : canPick
-                  ? "bg-gradient-to-r from-[#38BDF8] via-[#00C2FF] to-[#22C55E] text-black"
-                  : "bg-gradient-to-r from-emerald-500 to-[#00C2FF] text-black"
-              }`}
-          >
-            {picking ? "Opening..." : canPick ? "Random open" : "Buy extra"}
-          </button>
-        </section>
 
         {/* NAV */}
         <section className="flex gap-2">
