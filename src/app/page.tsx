@@ -1000,8 +1000,8 @@ export default function HomePage() {
         {!canPick && (
           <div className="mb-3 text-xs text-amber-200 bg-gradient-to-r from-amber-600/40 via-amber-500/20 to-amber-900/40 border border-amber-400/70 rounded-2xl px-3 py-2 shadow-[0_0_18px_rgba(251,191,36,0.55)]">
             
-            <p className="text-[9px]">
-              No boxes left to open - wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening.
+            <p className="text-[10px]">
+              wait until the timer hits <span className="font-semibold">Ready</span> or buy extra picks to keep opening.
             </p>
           </div>
         )}
@@ -1054,7 +1054,7 @@ export default function HomePage() {
     opacity-70
     group-hover:opacity-100
     transition">
-    Tap to open
+    open
   </span>
 </div>
 
