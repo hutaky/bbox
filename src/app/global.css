@@ -1,41 +1,38 @@
-/* --- Season banner marquee --- */
+/* --- Season banner marquee (robust) --- */
 .marquee {
   overflow: hidden;
-  white-space: nowrap;
+  position: relative;
 }
 
 .marquee__inner {
   display: inline-flex;
   align-items: center;
+  flex-wrap: nowrap;          /* ne törjön sorba */
+  width: max-content;         /* legyen akkora, amekkora a tartalom */
+  white-space: nowrap;        /* ne törjön sorba */
   will-change: transform;
   animation: marquee 18s linear infinite;
 }
 
-@keyframes marquee {
-  0% {
-    transform: translateX(0);
-  }
-  100% {
-    transform: translateX(-50%);
-  }
+.marquee__inner > * {
+  white-space: nowrap;        /* a gyerekek se törjenek */
 }
 
-/* Pause on hover (desktop) */
+@keyframes marquee {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Pause hover (desktop) */
 @media (hover: hover) {
   .marquee:hover .marquee__inner {
     animation-play-state: paused;
   }
 }
 
-/* Reduced motion: disable animation and show fallback */
+/* Reduced motion fallback */
 @media (prefers-reduced-motion: reduce) {
-  .marquee__inner {
-    animation: none;
-  }
-  .marquee {
-    display: none;
-  }
-  .marquee--reduced {
-    display: block !important;
-  }
+  .marquee__inner { animation: none; }
+  .marquee { display: none; }
+  .marquee--reduced { display: block !important; }
 }
